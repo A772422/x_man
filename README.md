@@ -40,6 +40,14 @@ per-day limits (M.R.X. tells you when one is hit); default model `gemini-2.5-fla
 set, the preferred provider (Settings → AI) is used first and the other is a fallback — e.g. Claude out of credits → Gemini.
 The Gemini path is tested against a mocked stream and Google's real request validation, but **not yet with a live key**.
 
+#### Gemini keys starting with `AQ.` (Google's newer type)
+
+Since late 2025 AI Studio often creates keys that start with `AQ.` instead of `AIza`. Many Gemini endpoints reject them
+([Google forum reports](https://discuss.ai.google.dev/t/aq-key-returns-401-access-token-type-unsupported-on-generatecontent/179102)); M.R.X. shows
+"Google key starts with AQ." when that happens. Fix: open https://aistudio.google.com/apikey in a **private/incognito window**, delete the AQ.
+keys and click *Create API key* — or in Google Cloud Console go to *APIs & Services → Credentials → Create credentials → API key* and
+enable the *Generative Language API*. Then run `setup_key.bat` with the new `AIza…` key.
+
 ### Setting your API key (any one of these)
 
 0. **Simplest:** double-click **`setup_key.bat`**, paste the key, press Enter. It saves `.env` in the M.R.X. folder and tests it.
@@ -123,7 +131,7 @@ Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash
 
 ```bash
 pip install -r requirements-dev.txt && playwright install chromium   # dev = core + optional + pytest
-python -m pytest            # 136 tests; browser tests skip if Chromium cannot start
+python -m pytest            # 138 tests; browser tests skip if Chromium cannot start
 npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
 ```
 

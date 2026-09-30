@@ -79,6 +79,12 @@ def _merge_text(parts: list[dict]) -> list[dict]:
     return out
 
 
+AQ_HELP = ("Your Google key starts with 'AQ.' — Google's newer key type, which many Gemini endpoints reject (a known Google issue). "
+           "Create a standard key that starts with 'AIza' instead: open https://aistudio.google.com/apikey in a private/incognito window, "
+           "delete the AQ. key(s), click Create API key — or use Google Cloud Console → APIs & Services → Credentials → Create credentials → "
+           "API key (enable the 'Generative Language API' for that project). Then run setup_key.bat with the new key.")
+
+
 class GeminiProvider(LLMProvider):
     name = "gemini"
 
@@ -151,6 +157,9 @@ class GeminiProvider(LLMProvider):
             j = {}
         msg, st = j.get("message") or raw[:200], j.get("status", "")
         low = (msg + raw).lower()
+        key = self._key() or ""
+        if key.startswith("AQ.") and status in (401, 403, 404):
+            return LLMError(AQ_HELP + f" (Google's reply: HTTP {status} {msg[:140]})")
         if "api key not valid" in low or "api_key_invalid" in low or "api key expired" in low:
             return LLMError("The Gemini API key was rejected. Create a free key at https://aistudio.google.com/apikey and enter it again.")
         if status == 429 or st == "RESOURCE_EXHAUSTED":

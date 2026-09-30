@@ -277,3 +277,23 @@ async def test_diagnose_reports_each_endpoint_without_the_key(rt, gem):
     lines = await g.GeminiProvider(rt).diagnose()
     assert len(lines) == 3 and "HTTP 404 - not found" in lines[0] and "HTTP 200 - " in lines[1] and "HTTP 401" in lines[2]
     assert "AIza" not in " ".join(lines)
+
+
+async def test_aq_key_gets_a_specific_actionable_message(rt, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "AQ.Ab8RN6IKm4lQcT4B5xHeE-fake")
+    nf = httpx.Response(404, json={"error": {"code": 404, "message": "not found", "status": "NOT_FOUND"}})
+    rt.http = httpx.AsyncClient(transport=httpx.MockTransport(Fake(nf, nf, nf, nf, nf)))
+    with pytest.raises(LLMError) as e:
+        await g.GeminiProvider(rt).stream_turn("s", [{"role": "user", "content": "x"}], [], nop)
+    m = str(e.value)
+    assert "starts with 'AQ.'" in m and "incognito" in m and "AIza" in m and "HTTP 404" in m and "AQ.Ab8RN6" not in m   # never echoes the key
+
+
+async def test_all_provider_failures_are_shown_not_just_the_last(rt):
+    a = Stub("anthropic", "Your Anthropic API account has no credits left.")
+    b = Stub("gemini", "Google key starts with AQ. and was rejected.")
+    rt.agent.provider = Router(rt, {"anthropic": a, "gemini": b})
+    rt.settings.update({"ai": {"provider": "gemini"}})
+    t = await run_task(rt, "hello there")
+    assert "gemini: Google key starts with AQ." in t.result.lower() or "Google key starts with AQ." in t.result
+    assert "no credits left" in t.result                    # both reasons visible

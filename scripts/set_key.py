@@ -49,6 +49,11 @@ def main() -> int:
         print(f"\n  That does not look like a {label.split(' (')[0]} key (expected to start with {starts} and contain no spaces).")
         if input("  Save it anyway? [y/N] ").strip().lower() != "y":
             return 1
+    if key.startswith("AQ."):
+        print("\n  NOTE: keys starting with 'AQ.' are Google's newer key type; many Gemini endpoints reject them (a known Google issue).")
+        print("  If the test below fails, create an 'AIza...' key: open https://aistudio.google.com/apikey in an INCOGNITO window,")
+        print("  delete the AQ. keys, click Create API key. Alternative: Google Cloud Console > APIs & Services > Credentials > Create API key,")
+        print("  and enable the 'Generative Language API' for that project.")
     write_env(name, key)
     sys.path.insert(0, str(ROOT))
     os.environ[name] = key

@@ -172,12 +172,14 @@ class Agent:
             await tm.set(task, status="RUNNING", outcome="EXECUTING", action="Working")
             if engine == "llm":
                 chain = self.provider.chain()
+                failures: list[str] = []
                 for i, prov in enumerate(chain):
                     try:
                         final_text = await self._llm_loop(task, text, lang, ctx, memories, results, prov)
                         self.rt.health["ai"] = {"state": "CONNECTED", "last_ok": time.time(), "error": None}
                         break
                     except LLMError as e:
+                        failures.append(f"{prov.describe()}: {e}")
                         if hasattr(self.provider, "penalize"):
                             self.provider.penalize(prov, e)
                         self.rt.health["ai"] = {"state": "OFFLINE" if i == len(chain) - 1 else "DEGRADED", "last_ok": None, "error": str(e)}
@@ -188,7 +190,7 @@ class Agent:
                             await tm.step(task, f"{prov.describe()} unavailable — trying {chain[i + 1].describe()}", "warn", str(e))
                             continue
                         await tm.step(task, "AI provider unavailable — using offline command engine", "warn", str(e))
-                        final_text = await self._local_loop(task, text, ctx, results, llm_error=str(e))
+                        final_text = await self._local_loop(task, text, ctx, results, llm_error="\n  • " + "\n  • ".join(failures))
             else:
                 final_text = await self._local_loop(task, text, ctx, results, why=why)
 
