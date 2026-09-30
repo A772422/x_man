@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -445,12 +446,121 @@ def power_action(rt, action: str):
     return Outcome({"action": action}, None, "command issued; the OS reports no result before it acts")
 
 
+def open_url(rt, url: str):
+    """Open a website in the user's default browser (their normal, logged-in browser — not the automation browser)."""
+    import webbrowser
+    from .browser import normalize_url
+    u = normalize_url(url)
+    if not u.startswith(("http://", "https://")):
+        raise ToolError("open_url only opens http(s) websites")
+    ok = webbrowser.open(u)
+    if not ok:
+        raise ToolError("the operating system could not open the default browser")
+    return Outcome({"url": u}, None, "URL handed to the default browser; the page itself is not observable")
+
+
+# ---- volume -----------------------------------------------------------------------------------------------------
+def parse_pactl_volume(text: str) -> int | None:
+    m = re.search(r"(\d{1,3})%", text)
+    return int(m.group(1)) if m else None
+
+
+def _run(cmd: list[str]) -> str:
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+    if r.returncode != 0:
+        raise ToolError(f"{cmd[0]} failed: {(r.stderr or r.stdout).strip()[:120]}")
+    return r.stdout
+
+
+def _win_endpoint():
+    try:
+        import comtypes
+        from pycaw.pycaw import AudioUtilities
+    except ImportError:
+        raise ToolError("volume control on Windows needs the 'pycaw' package — run update.bat to install it")
+    comtypes.CoInitialize()          # tools run in worker threads; COM must be initialised per thread
+    dev = AudioUtilities.GetSpeakers()
+    ep = getattr(dev, "EndpointVolume", None)
+    if ep is not None:
+        return ep
+    from ctypes import POINTER, cast
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import IAudioEndpointVolume
+    return cast(dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None), POINTER(IAudioEndpointVolume))
+
+
+def _read_volume() -> tuple[int, bool | None]:
+    if WIN:
+        ep = _win_endpoint()
+        return round(ep.GetMasterVolumeLevelScalar() * 100), bool(ep.GetMute())
+    if MAC:
+        out = _run(["osascript", "-e", "get volume settings"])
+        m = re.search(r"output volume:(\d+)", out)
+        return int(m.group(1)), "output muted:true" in out
+    if shutil.which("pactl"):
+        v = parse_pactl_volume(_run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"]))
+        muted = "yes" in _run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"]).lower()
+        if v is None:
+            raise ToolError("could not read the volume from pactl")
+        return v, muted
+    if shutil.which("amixer"):
+        out = _run(["amixer", "sget", "Master"])
+        v = parse_pactl_volume(out)
+        if v is None:
+            raise ToolError("could not read the volume from amixer")
+        return v, "[off]" in out
+    raise ToolError("no supported audio control found (Windows: pycaw · macOS: osascript · Linux: pactl or amixer)")
+
+
+def get_volume(rt):
+    v, muted = _read_volume()
+    return {"percent": v, "muted": muted}
+
+
+def set_volume(rt, percent: int | None = None, delta: int | None = None, mute: bool | None = None):
+    if percent is None and delta is None and mute is None:
+        raise ToolError("give percent, delta or mute")
+    cur, _ = _read_volume()
+    target = None if (percent is None and delta is None) else max(0, min(100, percent if percent is not None else cur + delta))
+    if WIN:
+        ep = _win_endpoint()
+        if target is not None:
+            ep.SetMasterVolumeLevelScalar(target / 100.0, None)
+        if mute is not None:
+            ep.SetMute(1 if mute else 0, None)
+    elif MAC:
+        if target is not None:
+            _run(["osascript", "-e", f"set volume output volume {target}"])
+        if mute is not None:
+            _run(["osascript", "-e", f"set volume {'with' if mute else 'without'} output muted"])
+    elif shutil.which("pactl"):
+        if target is not None:
+            _run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{target}%"])
+        if mute is not None:
+            _run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1" if mute else "0"])
+    elif shutil.which("amixer"):
+        if target is not None:
+            _run(["amixer", "sset", "Master", f"{target}%"])
+        if mute is not None:
+            _run(["amixer", "sset", "Master", "mute" if mute else "unmute"])
+    else:
+        _read_volume()  # raises the "no supported audio control" error
+    time.sleep(0.15)
+    now, muted = _read_volume()
+    ok = (target is None or abs(now - target) <= 2) and (mute is None or muted is None or muted == mute)
+    return Outcome({"percent": now, "muted": muted}, ok, f"read back: volume {now}%, muted={muted}")
+
+
 def tools() -> list[Tool]:
     S, I = {"type": "string"}, {"type": "integer"}
     G = _gui_available
     return [
         Tool("open_application", "Launch an application by name (e.g. chrome, vscode, notepad). Verified by detecting its process.",
              {"name": S, "args": {"type": "array", "items": S}, "wait_s": {"type": "number"}}, ["name"], open_application, risk_fn=_launch_risk, scope="plugin:windows"),
+        Tool("open_url", "Open a website (e.g. https://www.youtube.com) in the user's default browser.", {"url": S}, ["url"], open_url, scope="plugin:windows"),
+        Tool("get_volume", "Read the system output volume and mute state.", {}, [], get_volume, scope="plugin:windows"),
+        Tool("set_volume", "Set the system volume (percent 0-100), change it by a delta, and/or mute/unmute. Verified by reading it back.",
+             {"percent": I, "delta": I, "mute": {"type": "boolean"}}, [], set_volume, scope="plugin:windows"),
         Tool("is_application_running", "Check whether an application is currently running.", {"name": S}, ["name"], is_running, scope="plugin:windows"),
         Tool("close_application", "Close an application (terminates its processes).", {"name": S, "force": {"type": "boolean"}},
              ["name"], close_application, risk=2, scope="plugin:windows"),

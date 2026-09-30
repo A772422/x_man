@@ -18,7 +18,7 @@ READ_ONLY = {"read_file", "list_directory", "search_files", "file_info", "get_sy
              "get_live_news", "get_world_map_data", "recall_memory", "list_memories", "read_page", "extract_links", "list_tabs",
              "is_application_running", "identify_device", "read_email", "list_emails", "search_email", "youtube_search",
              "youtube_status", "social_list_providers", "social_read", "social_search", "mouse_position", "clipboard_get",
-             "list_windows", "extract_structured", "screen_ocr", "show_map", "screenshot", "browser_screenshot"}
+             "list_windows", "extract_structured", "screen_ocr", "show_map", "screenshot", "browser_screenshot", "get_volume"}
 
 
 class ToolError(Exception):

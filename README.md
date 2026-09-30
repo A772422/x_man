@@ -42,6 +42,9 @@ if you cloned), keeps your `.env`, settings and memories, then tells you to rest
 3. **Environment variable:** `set ANTHROPIC_API_KEY=...` (Windows CMD) **in the same window, before** `run.bat`.
    (`set` prints nothing, and a running M.R.X. never sees a variable set afterwards or in another window.)
 
+> **"Your credit balance is too low"?** The key works but the Anthropic *API* account has no credits. Add credits at
+> https://console.anthropic.com → Plans & Billing. (A Claude.ai Pro/Max subscription does not include API credits.)
+
 ### Optional keys
 
 | Key | Enables |
@@ -112,7 +115,7 @@ Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash
 
 ```bash
 pip install -r requirements-dev.txt && playwright install chromium   # dev = core + optional + pytest
-python -m pytest            # 106 tests; browser tests skip if Chromium cannot start
+python -m pytest            # 115 tests; browser tests skip if Chromium cannot start
 npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
 ```
 

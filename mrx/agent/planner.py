@@ -69,6 +69,14 @@ def _target(rest: str, ctx: Context) -> tuple[str | None, str]:
     return name, name
 
 
+SITES = {"youtube": "https://www.youtube.com", "gmail": "https://mail.google.com", "google": "https://www.google.com",
+         "github": "https://github.com", "facebook": "https://www.facebook.com", "instagram": "https://www.instagram.com",
+         "twitter": "https://x.com", "x": "https://x.com", "whatsapp": "https://web.whatsapp.com", "linkedin": "https://www.linkedin.com",
+         "reddit": "https://www.reddit.com", "netflix": "https://www.netflix.com", "amazon": "https://www.amazon.com",
+         "wikipedia": "https://www.wikipedia.org", "google maps": "https://www.google.com/maps", "maps": "https://www.google.com/maps",
+         "google drive": "https://drive.google.com", "drive": "https://drive.google.com", "chatgpt": "https://chatgpt.com",
+         "claude": "https://claude.ai", "outlook": "https://outlook.live.com", "stackoverflow": "https://stackoverflow.com"}
+
 URL_RE = re.compile(r"((?:https?://)?(?:[\w\-]+\.)+(?:com|org|net|io|in|co|edu|gov|dev|app|ai|tv|me)(?:/\S*)?)", re.I)
 
 
@@ -219,12 +227,31 @@ def plan_clause(clause: str, ctx: Context) -> Intent | None:
         if p:
             return Intent("call", "read_file", {"path": p}, "Read file")
 
+    # --- volume ----------------------------------------------------------------------------------------------
+    m = re.fullmatch(r"(?:please\s+)?(?:set|change|make|put)?\s*(?:the\s+)?(?:system\s+)?(?:volume|sound)\s*(?:level\s*)?(?:to|at)?\s*(\d{1,3})\s*(?:%|percent)?", low) or \
+        re.fullmatch(r"(?:please\s+)?(?:set|change|make|put)\s+(?:the\s+)?(?:volume|sound)\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?", low)
+    if m:
+        return Intent("call", "set_volume", {"percent": min(100, int(m.group(1)))}, f"Set volume to {min(100, int(m.group(1)))}%")
+    m = re.fullmatch(r"(?:please\s+)?(?:(increase|raise|turn up|lower|decrease|reduce|turn down)\s+(?:the\s+)?(?:volume|sound)|volume\s+(up|down)|(louder|quieter))(?:\s+by\s+(\d{1,2})\s*(?:%|percent)?)?", low)
+    if m:
+        up = (m.group(1) or m.group(2) or m.group(3) or "") in ("increase", "raise", "turn up", "up", "louder")
+        step = int(m.group(4) or 10)
+        return Intent("call", "set_volume", {"delta": step if up else -step}, f"Volume {'up' if up else 'down'} {step}%")
+    m = re.fullmatch(r"(?:please\s+)?(mute|unmute)(?:\s+(?:the\s+)?(?:sound|volume|audio|speakers?|system|computer))?", low)
+    if m:
+        return Intent("call", "set_volume", {"mute": m.group(1) == "mute"}, "Mute" if m.group(1) == "mute" else "Unmute")
+    if re.fullmatch(r"(?:what(?:'s| is) the |how loud is the |check the |show the )?(?:current )?(?:volume|sound level)(?: level)?[?. ]*", low):
+        return Intent("call", "get_volume", {}, "Read volume")
+
     # --- applications (last: the most generic 'open X') -------------------------------------------------------
     m = re.match(r"(?:please\s+)?(?:open|launch|start|run|khol(?:o)?|chalao)\s+(?:the\s+|my\s+)?(.+?)(?:\s+(?:app|application|program))?$", c, re.I)
     if m:
         name = _unquote(m.group(1))
         if re.fullmatch(PRON, name, re.I) and ctx.last_app:
             name = ctx.last_app
+        site = SITES.get(re.sub(r"\.com$", "", name.lower()).strip())
+        if site:    # "open YouTube" means the website, not a program called YouTube
+            return Intent("call", "open_url", {"url": site}, f"Open {name} in your browser")
         return Intent("call", "open_application", {"name": name}, f"Open {name}")
     m = re.match(r"(?:close|quit|exit|kill|band karo|band kar)\s+(?:the\s+)?(.+?)(?:\s+(?:app|application|program))?$", c, re.I)
     if m:
@@ -239,8 +266,11 @@ def expand(it: Intent) -> list[Intent]:
     """'open Chrome and File Explorer' → two independent intents."""
     if it.kind == "call" and it.tool in ("open_application", "close_application") and re.search(r"\s+and\s+|,", it.args["name"]):
         verb = it.label.split(" ")[0]
-        return [Intent("call", it.tool, {"name": n}, f"{verb} {n}") for n in
-                [x.strip() for x in re.split(r"\s+and\s+|,", it.args["name"]) if x.strip()]]
+        out = []
+        for n in [x.strip() for x in re.split(r"\s+and\s+|,", it.args["name"]) if x.strip()]:
+            site = SITES.get(re.sub(r"\.com$", "", n.lower())) if it.tool == "open_application" else None
+            out.append(Intent("call", "open_url", {"url": site}, f"Open {n} in your browser") if site else Intent("call", it.tool, {"name": n}, f"{verb} {n}"))
+        return out
     return [it]
 
 

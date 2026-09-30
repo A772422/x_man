@@ -30,6 +30,38 @@ class LLMError(Exception):
     """User-presentable failure (auth, rate limit, offline...)."""
 
 
+def api_message(e: Exception) -> str:
+    """The provider's own error text, without the SDK's repr noise."""
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        m = (body.get("error") or {}).get("message") or body.get("message")
+        if m:
+            return str(m)
+    return str(getattr(e, "message", None) or e)
+
+
+def friendly_api_error(msg: str) -> str | None:
+    low = msg.lower()
+    if "credit balance is too low" in low or "billing" in low and "credit" in low:
+        return ("Your Anthropic API account has no credits left. Add credits at https://console.anthropic.com "
+                "→ Plans & Billing, then try again. (API credits are separate from a Claude.ai subscription.)")
+    if "invalid x-api-key" in low or "invalid api key" in low:
+        return "The Anthropic API key was rejected. Check that it is correct and active."
+    if "overloaded" in low:
+        return "The AI provider is overloaded right now. Try again in a moment."
+    return None
+
+
+_PARAM_HINTS = ("extra inputs", "not permitted", "output_config", "effort", "unexpected", "unknown", "fallbacks", "beta",
+                "thinking", "not supported", "unrecognized")
+
+
+def is_param_problem(msg: str) -> bool:
+    """A 400 that is about an optional request parameter (worth retrying without it) — not billing, model or content."""
+    low = msg.lower()
+    return friendly_api_error(msg) is None and any(h in low for h in _PARAM_HINTS)
+
+
 class LLMProvider(ABC):
     name = "abstract"
 
@@ -101,16 +133,24 @@ class AnthropicProvider(LLMProvider):
             for beta, prm in rungs:
                 try:
                     return await self._run(c.beta.messages.stream if beta else c.messages.stream, prm, on_text, beta=beta)
-                except (TypeError, anthropic.BadRequestError) as e:
+                except TypeError as e:
                     last = e
-                    log.warning("AI request variant rejected (%s): %s", "beta" if beta else "plain", e)
+                    log.warning("AI request variant not supported by this SDK (%s): %s", "beta" if beta else "plain", e)
+                except anthropic.BadRequestError as e:
+                    if not is_param_problem(api_message(e)):
+                        raise                      # billing / model / content problems: retrying only repeats the charge
+                    last = e
+                    log.warning("AI request variant rejected (%s): %s", "beta" if beta else "plain", api_message(e))
             if isinstance(last, anthropic.BadRequestError):
-                raise LLMError(f"The AI provider rejected the request: {getattr(last, 'message', str(last))[:300]}")
+                raise last
             raise LLMError(f"The installed anthropic SDK does not support this request ({last}). Run: pip install -U anthropic")
+        except anthropic.BadRequestError as e:
+            msg = api_message(e)
+            raise LLMError(friendly_api_error(msg) or f"The AI provider rejected the request: {msg[:300]}")
         except anthropic.AuthenticationError:
             raise LLMError("The Anthropic API key was rejected. Check that it is correct and active.")
         except anthropic.PermissionDeniedError as e:
-            raise LLMError(f"The API key is not allowed to use model '{params['model']}': {getattr(e, 'message', e)}")
+            raise LLMError(f"The API key is not allowed to use model '{params['model']}': {api_message(e)[:200]}")
         except anthropic.NotFoundError:
             raise LLMError(f"Model '{params['model']}' was not found for this API key. Change it in Settings → AI.")
         except anthropic.RateLimitError:
@@ -120,7 +160,8 @@ class AnthropicProvider(LLMProvider):
         except anthropic.APIConnectionError as e:
             raise LLMError(f"Cannot reach the AI provider (offline, firewall or proxy?): {type(e.__cause__ or e).__name__}")
         except anthropic.APIStatusError as e:
-            raise LLMError(f"AI provider error {e.status_code}: {getattr(e, 'message', str(e))[:200]}")
+            msg = api_message(e)
+            raise LLMError(friendly_api_error(msg) or f"AI provider error {e.status_code}: {msg[:200]}")
 
     async def _run(self, stream_fn, params, on_text, beta: bool) -> Turn:
         kw = dict(params)
