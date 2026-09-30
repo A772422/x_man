@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mrx-token" content="__MRX_TOKEN__">
+<title>M.R.X. — Command Center</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app" data-avatar="idle">
+  <header id="topbar">
+    <div class="brand"><span class="logo">M.R.X.</span><span class="tag">Real-time autonomous agent</span></div>
+    <div id="chips" class="chips" aria-label="System status"></div>
+    <div class="top-actions">
+      <span id="conn" class="conn off">connecting…</span>
+      <button id="btn-stop" class="btn danger" title="Stop everything (also: say “stop”)">■ Stop</button>
+    </div>
+  </header>
+
+  <nav id="nav" aria-label="Main navigation"></nav>
+
+  <main id="main">
+    <section id="panel-dashboard" class="panel active">
+      <div class="core">
+        <div class="avatar-wrap">
+          <div id="avatar" class="avatar" data-state="idle" aria-hidden="true">
+            <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+            <div class="orb"></div>
+            <svg class="wave" viewBox="0 0 120 30" preserveAspectRatio="none"><g id="wave-bars"></g></svg>
+          </div>
+          <div id="avatar-label" class="avatar-label" role="status" aria-live="polite">IDLE</div>
+          <div id="engine-note" class="engine-note"></div>
+        </div>
+        <div id="convo" class="convo" aria-live="polite"></div>
+        <form id="composer" class="composer" autocomplete="off">
+          <button type="button" id="btn-mic" class="btn mic" title="Voice input">🎤</button>
+          <input id="input" type="text" placeholder="Tell M.R.X. what to do…  (Hindi · English · Hinglish · …)" aria-label="Command">
+          <button type="submit" class="btn primary">Send</button>
+        </form>
+        <div id="voice-bar" class="voice-bar"></div>
+      </div>
+    </section>
+    <section id="panel-tasks" class="panel"></section>
+    <section id="panel-browser" class="panel"></section>
+    <section id="panel-youtube" class="panel"></section>
+    <section id="panel-files" class="panel"></section>
+    <section id="panel-news" class="panel"></section>
+    <section id="panel-map" class="panel"></section>
+    <section id="panel-network" class="panel"></section>
+    <section id="panel-memory" class="panel"></section>
+    <section id="panel-settings" class="panel"></section>
+    <section id="panel-debug" class="panel"></section>
+  </main>
+
+  <aside id="monitor" aria-label="System monitor"></aside>
+
+  <footer id="console">
+    <div class="console-head"><span>REAL-TIME ACTIVITY</span><span id="console-task" class="muted"></span>
+      <button id="console-toggle" class="btn ghost small">collapse</button></div>
+    <div id="console-body" class="console-body"></div>
+  </footer>
+</div>
+
+<div id="modal-root"></div>
+<div id="toasts" aria-live="assertive"></div>
+
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

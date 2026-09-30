@@ -1,2 +1,101 @@
-# x_man
-for assistant
+# M.R.X. — real-time autonomous desktop AI agent
+
+M.R.X. is a local-first agent that operates your computer, browser, files, connected services and local network from
+natural-language commands (typed or spoken), and reports **what it actually did and verified** — not what it hopes happened.
+
+```
+LISTEN → UNDERSTAND → PLAN → EXECUTE → OBSERVE → VERIFY → RESPOND
+```
+
+## Quick start
+
+**Windows** — put the folder on your Desktop, then:
+
+```bat
+python scripts\place_on_desktop.py        :: copies the project to Desktop\M.R.X   (or just clone this repo there)
+cd %USERPROFILE%\Desktop\M.R.X
+install.bat                                :: venv + dependencies + automation browser
+run.bat                                    :: starts M.R.X and opens http://127.0.0.1:8765
+```
+
+macOS / Linux: `./install.sh` then `./run.sh`. Python 3.10+ is required.
+
+> The project was built in a cloud session, which cannot write to your PC's Desktop. `scripts/place_on_desktop.py`
+> (or `git clone` into your Desktop) puts it there; it understands OneDrive-redirected Desktops.
+
+### Optional keys (Settings → Security stores them in the OS keychain, or use environment variables — see `.env.example`)
+
+| Key | Enables |
+|---|---|
+| `ANTHROPIC_API_KEY` | The AI engine: open-ended requests, multi-step planning, summarising, writing, recovery by changing strategy |
+| `YOUTUBE_API_KEY` | YouTube search (playing a pasted URL/ID works without it) |
+| `MRX_EMAIL_*` | Email over IMAP/SMTP (app password) |
+| `MRX_MASTODON_*` | Mastodon provider |
+
+Without `ANTHROPIC_API_KEY` M.R.X. still runs commands with a **deterministic offline command engine** (open/close apps,
+create/move/copy/rename/delete files, web/YouTube search, network scan, news, memory…). Anything it can't map, it says so.
+
+## What is real, and what is not
+
+Nothing here is simulated. Each capability either works against the real system/API, or reports that it is unavailable.
+
+| Area | Status |
+|---|---|
+| Agent loop, tool registry (86 tools), task manager (pause/resume/cancel/retry), event bus, WebSocket/SSE streaming | Implemented, tested |
+| Verification (file exists, process running, page URL/title, form value read back, file downloaded, player state, SMTP accepted…) | Implemented; tools return `verified: true / false / null`. `null` = sent but not observable — M.R.X. says "sent", never "done" |
+| Files & folders (incl. PDF/DOCX/XLSX reading, zip/tar, trash-based delete) | Implemented, tested |
+| Windows control: apps, processes, windows, keyboard, mouse, screenshot, OCR, clipboard, power | Implemented. Input/window/OCR tools need `pyautogui` / `pygetwindow` / Tesseract and a desktop session; otherwise they report *unavailable*. Only developed on Linux — **Windows behaviour is untested** |
+| Browser (Playwright): tabs, navigate, search, click with recovery ladder, forms, JS, downloads/uploads, dialogs, attach via CDP | Implemented, tested against real Chromium |
+| Built-in YouTube player (IFrame API), playback verified from the player's own reported state | Implemented; search needs `YOUTUBE_API_KEY`. Some videos disallow embedding — reported, not hidden |
+| Memory (long-term, preference, episodic, semantic, project) | Implemented. Retrieval is a **local hashed n-gram index**, lexical-similarity not neural embeddings. Secrets are refused |
+| Email (IMAP/SMTP; draft → review → send; separate permission) | Implemented, tested with a stubbed server only — **not run against a real mailbox** |
+| Social (provider interface + Mastodon) | Implemented, untested against a live instance |
+| Live news (real RSS/Atom, source/time/link, freshness label) | Implemented. Claim provenance (confirmed/official/reported…) is **not** auto-assigned; articles are labelled "not independently verified" |
+| World map (Leaflet + OpenStreetMap; USGS earthquakes, OpenSky flights, Open-Meteo weather, Nominatim search) | Implemented. Each layer shows provider + data time; failures show "unavailable". Traffic and geolocated-news layers are **not available** (no keyless legitimate source) |
+| Network radar (ARP/neighbour, ICMP on your own subnet, SSDP, mDNS, MAC vendor lookup, radar visual) | Implemented, tested; refuses non-private ranges, never port-scans. Wired/Wi-Fi is not observable → "Unknown". Vendor names: small built-in table + IEEE registry via *Update vendor database* |
+| Voice: wake word, push-to-talk, continuous, streaming recognition, sentence-streamed TTS, barge-in, multilingual | Implemented in the browser (Web Speech API; Chrome/Edge). Uses the system default mic/speaker. While M.R.X. speaks, only "stop"/the wake word interrupts (to avoid hearing itself). Logic unit-tested; **real microphone use is untested here** |
+| Calendar | **Not implemented** |
+| Gmail/Outlook OAuth flows | **Not implemented** (IMAP/SMTP app-password provider only; the provider interface is ready) |
+| AI engine (Anthropic, streaming tool use) | Implemented; exercised in tests with a scripted stand-in model. **Not run against the live API in this build** |
+
+## Safety model
+
+* **Confirmation levels** — 1 automatic · 2 confirm · 3 always confirm. Defaults: reads/opening known apps automatic;
+  move/rename/delete file, close apps, kill process, run JS, upload, keyboard/mouse input, unknown executables → confirm;
+  delete folder, shells/interpreters, power actions, sending email → always confirm. Change any of them, or mark level-2 tools
+  *trusted*, in Settings → Automation. Turning off *auto-execution* makes every state-changing action ask.
+* **Draft → review → send** for email; auto-send is off unless you enable it.
+* Deleted files go to `~/.mrx/trash` (recoverable).
+* The file tools are confined to your home folder (+ allowed roots) and can never read or write credential stores
+  (`.ssh`, `.aws`…), shell start-up files, auto-start folders, browser profiles or M.R.X.'s own private data.
+* Text from web pages, emails, files and news is treated as **untrusted data** by the agent's instructions; it cannot authorise actions.
+* Loopback-only server, per-launch token on every API/WebSocket call, Host and Origin checks (blocks DNS-rebinding and CSRF).
+* Secrets live in the OS keychain/env, are redacted from logs, audit records and events, and never enter LLM prompts.
+* Every tool call is audited (Debug → tool audit log).
+
+## Architecture
+
+```
+mrx/
+  core/      config · event bus · sqlite db · redaction & secret store
+  tools/     registry (validation, confirmation, retries, audit, events) · filesystem · system · browser
+  services/  memory · network radar · news · maps · youtube · email · social
+  agent/     orchestrator · task manager · LLM provider · offline planner · context (it/that/second one) · language detection
+  api/       FastAPI: REST + /ws/events + SSE
+  plugins.py plugin system (drop a .py with PLUGIN = Plugin(...) into ~/.mrx/plugins/)
+ui/          dependency-free web UI (dashboard, tasks, browser, YouTube, files, news, map, network, memory, settings, debug)
+tests/       pytest (backend, real Chromium) + node:test (UI state & voice logic)
+```
+
+Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash/`, `screenshots/`, `browser-profile/`, `plugins/`.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt && playwright install chromium
+python -m pytest            # 93 tests; browser tests skip if Chromium cannot start
+npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
+```
+
+Voice commands to try: "Hey M.R.X., open Chrome" · "Create a folder called Project X on my desktop" ·
+"Scan my network" · "Show today's global news" · "Remember that my project folder is on D drive" · "Stop".
