@@ -52,7 +52,8 @@ class SecretStore:
 
     SERVICE = "mrx"
 
-    def __init__(self):
+    def __init__(self, home=None):
+        self.env_file = (__import__("pathlib").Path(home) / ".env") if home else None
         try:
             import keyring  # type: ignore
             keyring.get_keyring()
@@ -62,7 +63,7 @@ class SecretStore:
 
     @property
     def backend(self) -> str:
-        return "os-keychain" if self._kr else "environment-only"
+        return "os-keychain" if self._kr else "environment / private .env file (no OS keychain found)"
 
     def get(self, name: str) -> str | None:
         env = os.environ.get(name)
@@ -84,7 +85,33 @@ class SecretStore:
         except Exception:
             return False
 
+    # -- fallback when no OS keychain exists: a private ~/.mrx/.env, applied to the running process at once -----
+    def _file_lines(self) -> list[str]:
+        try:
+            return self.env_file.read_text("utf-8-sig").splitlines() if self.env_file else []
+        except OSError:
+            return []
+
+    def in_file(self, name: str) -> bool:
+        return any(l.strip().removeprefix("export ").split("=", 1)[0].strip() == name for l in self._file_lines() if "=" in l)
+
+    def set_file(self, name: str, value: str) -> bool:
+        if not self.env_file:
+            return False
+        keep = [l for l in self._file_lines() if l.strip().removeprefix("export ").split("=", 1)[0].strip() != name]
+        self.env_file.write_text("\n".join(keep + [f"{name}={value}"]) + "\n", "utf-8")
+        try:
+            os.chmod(self.env_file, 0o600)
+        except OSError:
+            pass
+        os.environ[name] = value
+        return True
+
     def delete(self, name: str) -> None:
+        if self.in_file(name):
+            keep = [l for l in self._file_lines() if l.strip().removeprefix("export ").split("=", 1)[0].strip() != name]
+            self.env_file.write_text("\n".join(keep) + ("\n" if keep else ""), "utf-8")
+            os.environ.pop(name, None)
         if self._kr:
             try:
                 self._kr.delete_password(self.SERVICE, name)

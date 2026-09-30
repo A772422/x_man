@@ -68,7 +68,9 @@ class AnthropicProvider(LLMProvider):
         import anthropic
         key = self._api_key()
         if self._client is None or key != self._key:
-            self._client, self._key = anthropic.AsyncAnthropic(api_key=key, max_retries=2), key
+            # Bounded: a stalled connection must surface as an error, never as a silent hang.
+            # A plain number works across SDK versions (newer ones use a different httpx package).
+            self._client, self._key = anthropic.AsyncAnthropic(api_key=key, max_retries=2, timeout=90.0), key
         return self._client
 
     def tool_result_message(self, results):
@@ -81,24 +83,42 @@ class AnthropicProvider(LLMProvider):
         cfg = self.rt.settings.get("ai", {})
         params: dict[str, Any] = dict(
             model=cfg.get("model", "claude-opus-5-5"), max_tokens=int(cfg.get("max_tokens", 16000)),
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            tools=tools, messages=messages)
-        if cfg.get("effort"):
-            params["output_config"] = {"effort": cfg["effort"]}
-        c = self.client()
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}], messages=messages)
+        if tools:
+            params["tools"] = tools
+        with_effort = dict(params, output_config={"effort": cfg["effort"]}) if cfg.get("effort") else None
+        # Ladder of attempts, most featureful first. An SDK/model that rejects an optional parameter simply
+        # moves down a rung; only the last rung's error is shown to the user.
+        rungs: list[tuple[bool, dict]] = []
+        if cfg.get("refusal_fallback", False):
+            rungs.append((True, with_effort or params))
+        rungs.append((False, with_effort or params))
+        if with_effort:
+            rungs.append((False, params))
+        last: Exception | None = None
         try:
-            try:
-                return await self._run(c.beta.messages.stream, params, on_text, beta=cfg.get("refusal_fallback", True))
-            except (TypeError, anthropic.BadRequestError) as e:
-                # A model/SDK that does not accept the optional beta parameters: retry once without them.
-                log.info("retrying without optional beta params: %s", e)
-                return await self._run(c.messages.stream, params, on_text, beta=False)
+            c = self.client()
+            for beta, prm in rungs:
+                try:
+                    return await self._run(c.beta.messages.stream if beta else c.messages.stream, prm, on_text, beta=beta)
+                except (TypeError, anthropic.BadRequestError) as e:
+                    last = e
+                    log.warning("AI request variant rejected (%s): %s", "beta" if beta else "plain", e)
+            if isinstance(last, anthropic.BadRequestError):
+                raise LLMError(f"The AI provider rejected the request: {getattr(last, 'message', str(last))[:300]}")
+            raise LLMError(f"The installed anthropic SDK does not support this request ({last}). Run: pip install -U anthropic")
         except anthropic.AuthenticationError:
-            raise LLMError("The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.")
+            raise LLMError("The Anthropic API key was rejected. Check that it is correct and active.")
+        except anthropic.PermissionDeniedError as e:
+            raise LLMError(f"The API key is not allowed to use model '{params['model']}': {getattr(e, 'message', e)}")
+        except anthropic.NotFoundError:
+            raise LLMError(f"Model '{params['model']}' was not found for this API key. Change it in Settings → AI.")
         except anthropic.RateLimitError:
             raise LLMError("The AI provider is rate limiting requests. Try again in a moment.")
-        except anthropic.APIConnectionError:
-            raise LLMError("Cannot reach the AI provider (offline?). Local commands still work.")
+        except anthropic.APITimeoutError:
+            raise LLMError("The AI provider did not answer in time (90 s). Check your connection/firewall.")
+        except anthropic.APIConnectionError as e:
+            raise LLMError(f"Cannot reach the AI provider (offline, firewall or proxy?): {type(e.__cause__ or e).__name__}")
         except anthropic.APIStatusError as e:
             raise LLMError(f"AI provider error {e.status_code}: {getattr(e, 'message', str(e))[:200]}")
 

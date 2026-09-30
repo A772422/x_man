@@ -376,6 +376,27 @@ def create_app(rt: Runtime | None = None, token: str | None = None) -> FastAPI:
                                    one("maps", "https://earthquake.usgs.gov/"), one("ai", "https://api.anthropic.com/"))
         return ok(dict(res))
 
+    @app.post("/api/ai/test")
+    async def ai_test():
+        """Makes one tiny real request so the exact failure (bad key, model, network…) is visible."""
+        from ..agent.llm import LLMError
+        okp, why = rt.agent.provider.available()
+        if not okp:
+            return JSONResponse({"ok": False, "error": why}, status_code=200)
+        t0 = time.perf_counter()
+
+        async def _noop(_t: str) -> None: ...
+        try:
+            turn = await asyncio.wait_for(rt.agent.provider.stream_turn("Reply with the single word: ok",
+                                                                        [{"role": "user", "content": "ping"}], [], _noop), 75)
+        except LLMError as e:
+            return {"ok": False, "error": str(e)}
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "The AI provider did not answer within 75 s."}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return ok(reply=(turn.text or "")[:80], ms=int((time.perf_counter() - t0) * 1000), model=rt.settings.get("ai.model"))
+
     @app.get("/api/settings")
     async def settings_get():
         return ok(settings=rt.settings.all())
@@ -392,7 +413,7 @@ def create_app(rt: Runtime | None = None, token: str | None = None) -> FastAPI:
         import os
         out = {}
         for n in SECRET_NAMES:
-            src = "environment" if os.environ.get(n) else ("keychain" if rt.secrets.get(n) else "none")
+            src = ("file" if rt.secrets.in_file(n) else "environment") if os.environ.get(n) else ("keychain" if rt.secrets.get(n) else "none")
             out[n] = {"set": src != "none", "source": src}
         return ok(secrets=out, backend=rt.secrets.backend)
 
@@ -400,9 +421,14 @@ def create_app(rt: Runtime | None = None, token: str | None = None) -> FastAPI:
     async def secrets_set(name: str, body: dict):
         if name not in SECRET_NAMES:
             raise HTTPException(400, "unknown secret name")
-        if not rt.secrets.set(name, str(body.get("value", ""))):
-            raise HTTPException(409, f"No OS keychain is available. Set the {name} environment variable instead.")
-        return ok()
+        value = str(body.get("value", "")).strip()
+        if not value:
+            raise HTTPException(400, "empty value")
+        if rt.secrets.set(name, value):
+            return ok(stored="keychain")
+        if body.get("allow_file") and rt.secrets.set_file(name, value):
+            return ok(stored="file")
+        return JSONResponse({"ok": False, "error": "No OS keychain is available on this system.", "needs_file_fallback": True}, status_code=409)
 
     @app.delete("/api/secrets/{name}")
     async def secrets_del(name: str):

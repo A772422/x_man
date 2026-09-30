@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
         "max_tokens": 16000,
         "streaming": True,
         "max_steps": 12,
+        "refusal_fallback": False,
     },
     "voice": {
         "wake_word": "hey mrx",

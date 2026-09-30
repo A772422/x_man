@@ -28,7 +28,7 @@ function toast(text, kind = '', ms = 4500) {
 }
 function renderModal() {
   const root = $('#modal-root'); const c = state.confirmations[0];
-  if (!c) { if (root.firstChild) clear(root); return; }
+  if (!c) { if (root.firstChild?.dataset.cid) clear(root); return; }   // only ever remove a confirmation dialog, never the API-key dialog
   if (root.firstChild?.dataset.cid === c.id) return;
   const answer = (approved) => { events.send({ type: 'confirm', id: c.id, approved }); state.confirmations = state.confirmations.filter((x) => x.id !== c.id); renderModal(); schedule(); };
   const cancel = h('button', { class: 'btn', onclick: () => answer(false) }, 'Cancel');
@@ -39,6 +39,29 @@ function renderModal() {
       state.confirmations.length > 1 ? h('div', { class: 'muted' }, `${state.confirmations.length - 1} more waiting`) : null,
       h('div', { class: 'row' }, cancel, h('button', { class: 'btn ' + (c.level >= 3 ? 'danger' : 'primary'), onclick: () => answer(true) }, 'Confirm'))));
   put(clear(root), back); cancel.focus();
+}
+
+// ---------------------------------------------------------------------------------------------- AI key / test
+async function testAi() {
+  toast('Testing the AI connection…', '', 2500);
+  try { const r = await api('/api/ai/test', { method: 'POST' });
+    if (r.ok) toast(`AI engine works (${r.model}, ${r.ms} ms)`, 'ok', 6000); else toast(`AI engine problem: ${r.error}`, 'err', 12000);
+  } catch (e) { toast(`Test failed: ${e.message}`, 'err', 8000); }
+  refreshStatus();
+}
+function askKey() {
+  const root = $('#modal-root'); const inp = h('input', { type: 'password', class: 'grow', placeholder: 'sk-ant-…', autocomplete: 'off', spellcheck: 'false' });
+  const close = () => clear(root); const msg = h('div', { class: 'muted', style: 'min-height:18px' });
+  const save = async (allowFile = false) => {
+    const v = inp.value.trim(); if (!v) return; msg.textContent = 'Saving…'; fileBtn.style.display = 'none';
+    try { const r = await api('/api/secrets/ANTHROPIC_API_KEY', { method: 'POST', body: { value: v, allow_file: allowFile } }); inp.value = ''; close(); toast(`Key stored in ${r.stored === 'file' ? 'a private file (~/.mrx/.env)' : 'the OS keychain'}`, 'ok', 4000); await refreshStatus(); await testAi(); }
+    catch (e) { if (e.data?.needs_file_fallback) { msg.textContent = 'No OS keychain was found. You can store the key in a private file in your M.R.X. folder (~/.mrx/.env) instead.'; fileBtn.style.display = ''; } else msg.textContent = e.message; }
+  };
+  const fileBtn = h('button', { class: 'btn', style: 'display:none', onclick: () => save(true) }, 'Save to private file instead');
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(false); if (e.key === 'Escape') close(); });
+  put(clear(root), h('div', { class: 'modal-back', onclick: (e) => e.target === e.currentTarget && close() }, h('div', { class: 'modal', role: 'dialog', 'aria-label': 'Enable AI engine' },
+    h('h3', {}, 'Enable the AI engine'), h('p', { class: 'muted' }, 'Paste your Anthropic API key. It is stored in the OS keychain (Windows Credential Manager), takes effect immediately, and is never shown again or sent anywhere except Anthropic.'),
+    h('div', { class: 'row' }, inp), msg, h('div', { class: 'row' }, h('button', { class: 'btn', onclick: close }, 'Cancel'), fileBtn, h('button', { class: 'btn primary', onclick: () => save(false) }, 'Save & test'))))); inp.focus();
 }
 
 // ---------------------------------------------------------------------------------------------- voice
@@ -91,13 +114,18 @@ async function refreshStatus() { try { state.status = await api('/api/system/sta
 
 // ---------------------------------------------------------------------------------------------- rendering
 function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); }
-let lastMsgCount = -1; let lastStream = '';
+let lastMsgCount = -1; let lastStream = ''; let lastBusy = -1;
 function render() {
   const st = avatarState(state);
   $('#app').dataset.avatar = st; $('#avatar').dataset.state = st; $('#avatar-label').textContent = st.toUpperCase();
   if (state.flash && state.flash.until > Date.now()) setTimeout(schedule, state.flash.until - Date.now() + 30);
   renderChips(); renderConvo(); renderConsole(); renderVoiceBar(); renderModal(); renderNavBadge();
-  if (state.status) $('#engine-note').textContent = state.status.engine === 'llm' ? `AI engine online · ${state.status.model}` : 'Offline command engine — common commands work; add an ANTHROPIC_API_KEY (Settings → Security) for open-ended requests.';
+  if (state.status) {
+    const note = $('#engine-note'); const online = state.status.engine === 'llm'; const sig = String(online) + state.status.model;
+    if (note.dataset.sig !== sig) { note.dataset.sig = sig; clear(note);
+      put(note, online ? `AI engine online · ${state.status.model} ` : 'Offline command engine — simple commands only. ',
+        h('button', { class: 'btn small', onclick: online ? testAi : askKey }, online ? 'Test connection' : 'Enable AI engine…')); }
+  }
   $('#console-task').textContent = state.activeTask && state.tasks[state.activeTask] ? `${state.tasks[state.activeTask].command} — ${(state.tasks[state.activeTask].outcome && state.tasks[state.activeTask].status === 'COMPLETED' ? state.tasks[state.activeTask].outcome : state.tasks[state.activeTask].status).replace(/_/g, ' ')}` : '';
   if (active === 'tasks') panels.tasks.update(); if (active === 'network') panels.network.update?.();
   panels.monitor.update();
@@ -111,7 +139,8 @@ function renderChips() {
 function renderNavBadge() { const b = $('#nav [data-p=tasks] .badge'); const n = Object.values(state.tasks).filter((t) => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(t.status)).length; if (b) { b.textContent = n || ''; b.style.display = n ? '' : 'none'; } }
 function renderConvo() {
   const box = $('#convo'); const streaming = Object.entries(state.streaming).map(([k, v]) => v).join('\n');
-  if (lastMsgCount === state.messages.length && lastStream === streaming) return; lastMsgCount = state.messages.length; lastStream = streaming;
+  const busySig = Object.values(state.tasks).filter((t) => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(t.status)).length;
+  if (lastMsgCount === state.messages.length && lastStream === streaming && lastBusy === busySig) return; lastMsgCount = state.messages.length; lastStream = streaming; lastBusy = busySig;
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 40; clear(box);
   if (!state.messages.length && !streaming) put(box, h('div', { class: 'msg sys' }, 'Ready. Try: “Open Chrome”, “Create a folder called Project X on my desktop”, “Scan my network”, or press 🎤 and speak (Hindi, English, Hinglish…).'));
   state.messages.forEach((m) => put(box, h('div', { class: 'msg ' + (m.role === 'user' ? 'user' : 'agent' + (m.outcome === 'FAILED' ? ' err' : m.outcome === 'PARTIALLY_COMPLETED' ? ' partial' : '')) }, m.text,

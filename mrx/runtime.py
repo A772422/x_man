@@ -27,7 +27,7 @@ class Runtime:
         self.settings = Settings(home)
         self.db = Database(self.settings.db_path)
         self.bus = EventBus()
-        self.secrets = SecretStore()
+        self.secrets = SecretStore(self.settings.home)
         self.http = httpx.AsyncClient(headers={"User-Agent": "M.R.X./0.1"}, follow_redirects=True)
         self.registry = ToolRegistry(self)
         self.memory = MemoryStore(self.db)

@@ -76,6 +76,16 @@ def plan_clause(clause: str, ctx: Context) -> Intent | None:
     c = clause.strip()
     low = c.lower()
 
+    if re.fullmatch(r"(?:hi+|hey+|hello+|hola|yo|namaste|namaskar|sat sri akal|salaam|assalam[a-z ]*|good (?:morning|afternoon|evening)|"
+                    r"how are you|what'?s up|sup)(?:\s+(?:there|mrx|m\.?r\.?x\.?|buddy))?[!?. ]*", low) or \
+            re.fullmatch(r"(?:hey|hi|hello|ok|okay)[, ]+m\.?r\.?x\.?[!?. ]*|(?:नमस्ते|हेलो|हैलो|सत श्री अकाल|ਸਤ ਸ੍ਰੀ ਅਕਾਲ)[!?. ]*", low):
+        return Intent("say", text="Hello! I'm M.R.X. Tell me what to do — for example “open Chrome”, “create a folder called "
+                                  "Project X on my desktop”, “scan my network” or “show today's news”.", label="greeting")
+    if re.fullmatch(r"(?:help|what can you do|who are you|what are you)[?! .]*", low):
+        return Intent("say", text="I'm M.R.X., an agent that operates your computer: apps, files, the browser, YouTube, memory, "
+                                  "your local network, news and maps. Say what you want done and I'll do it and verify the result.",
+                      label="greeting")
+
     m = re.match(r"(?:what(?:'s| is) the )?(?:current )?(?:time|date)\b", low)
     if m or re.match(r"what time is it|what(?:'s| is) today'?s date", low):
         import datetime

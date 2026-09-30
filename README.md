@@ -23,7 +23,15 @@ macOS / Linux: `./install.sh` then `./run.sh`. Python 3.10+ is required.
 > The project was built in a cloud session, which cannot write to your PC's Desktop. `scripts/place_on_desktop.py`
 > (or `git clone` into your Desktop) puts it there; it understands OneDrive-redirected Desktops.
 
-### Optional keys (Settings → Security stores them in the OS keychain, or use environment variables — see `.env.example`)
+### Setting your API key (any one of these)
+
+1. **In the app (easiest, no restart):** dashboard → **Enable AI engine…** (or Settings → Security). Stored in the OS keychain
+   (Windows Credential Manager); if none exists it offers a private `~/.mrx/.env` file. Then **Test AI connection** shows the exact problem if any.
+2. **`.env` file:** copy `.env.example` to `.env` in the project folder, fill in `ANTHROPIC_API_KEY=...`, restart `run.bat`.
+3. **Environment variable:** `set ANTHROPIC_API_KEY=...` (Windows CMD) **in the same window, before** `run.bat`.
+   (`set` prints nothing, and a running M.R.X. never sees a variable set afterwards or in another window.)
+
+### Optional keys
 
 | Key | Enables |
 |---|---|
@@ -93,7 +101,7 @@ Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash
 
 ```bash
 pip install -r requirements-dev.txt && playwright install chromium
-python -m pytest            # 93 tests; browser tests skip if Chromium cannot start
+python -m pytest            # 102 tests; browser tests skip if Chromium cannot start
 npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
 ```
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import platform
 import re
@@ -17,6 +18,8 @@ from .context import Context
 from .language import detect_language
 from .llm import AnthropicProvider, LLMError, LLMProvider, ToolUse
 from .tasks import FINAL, Task, TaskManager
+
+log = logging.getLogger("mrx.agent")
 
 CONTROL = [
     ("cancel", r"(?:stop|cancel|abort|halt|kill)(?:\s+(?:it|that|this|the (?:current )?task|everything|now|speaking|talking))?|never ?mind|ruko|roko|band karo yeh|रुको|रोको|बस|ਰੁਕੋ|நிறுத்து"),
@@ -174,9 +177,9 @@ class Agent:
                         final_text = f"The AI provider failed part-way: {e}"
                     else:  # nothing has run yet → degrade to the local engine rather than failing outright
                         await tm.step(task, "AI provider unavailable — using offline command engine", "warn", str(e))
-                        final_text = await self._local_loop(task, text, ctx, results, note=f"({e})")
+                        final_text = await self._local_loop(task, text, ctx, results, llm_error=str(e))
             else:
-                final_text = await self._local_loop(task, text, ctx, results, note=f"(offline command engine: {why})")
+                final_text = await self._local_loop(task, text, ctx, results, why=why)
 
             await tm.set(task, status="VERIFYING", outcome="VERIFYING", action="Verifying results", progress=0.95)
             ok = [r for r in results if r.success]
@@ -206,6 +209,7 @@ class Agent:
                 pass
             raise
         except Exception as e:  # noqa: BLE001
+            log.exception("task %s crashed", task.id)
             await tm.set(task, status="FAILED", outcome="FAILED", error=f"{type(e).__name__}: {e}", action="Failed")
             await self._say(cid, f"That failed unexpectedly: {type(e).__name__}: {e}", task.id)
 
@@ -281,7 +285,8 @@ class Agent:
         await self.tasks.step(task, describe_call(name, args), st, detail, idx=idx)
 
     # --------------------------------------------------------------------------------------- local engine
-    async def _local_loop(self, task: Task, text: str, ctx: Context, results: list[ToolResult], note: str = "") -> str:
+    async def _local_loop(self, task: Task, text: str, ctx: Context, results: list[ToolResult],
+                          why: str = "", llm_error: str = "") -> str:
         tm, reg = self.tasks, self.rt.registry
         ctx.add_turn("user", text)
         lines: list[str] = []
@@ -297,7 +302,7 @@ class Agent:
             intents = planner.expand(it)
             await tm.set(task, progress=0.1 + 0.8 * done / max(len(clauses), 1), action=intents[0].label)
             if intents[0].kind == "say":
-                lines.append(intents[0].text)
+                lines.append(intents[0].text + (f"\n{self._engine_hint(why, llm_error)}" if intents[0].label == "greeting" else ""))
                 done += 1
                 continue
             batch = []
@@ -323,10 +328,17 @@ class Agent:
                 lines.append(self._render_local(b, r))
             done += 1
         if unmapped:
-            lines.append(("I can't do \"" + "\", \"".join(unmapped) + "\" with the offline command engine. "
-                          "Open-ended requests need the AI engine: add an ANTHROPIC_API_KEY in Settings → Security. ") + note)
-        ans = "\n".join(lines) or f"I didn't recognise a command in that. {note}"
-        return ans
+            quoted = "\", \"".join(unmapped)
+            lines.append(f"I can't do \"{quoted}\" without the AI engine. " + self._engine_hint(why, llm_error))
+        return "\n".join(lines) or f"I didn't recognise a command in that. {self._engine_hint(why, llm_error)}"
+
+    @staticmethod
+    def _engine_hint(why: str, llm_error: str) -> str:
+        if llm_error:
+            return (f"The AI engine could not be used: {llm_error} "
+                    "Fix it in Settings → AI (use “Test AI connection”); meanwhile simple commands still work.")
+        return ("The AI engine is not active — " + (why or "no API key") + ". Paste your key in Settings → Security "
+                "(takes effect immediately, no restart), or set ANTHROPIC_API_KEY in the same window before starting run.bat.")
 
     def _render_local(self, it: planner.Intent, r: ToolResult) -> str:
         if not r.success:
