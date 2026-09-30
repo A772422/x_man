@@ -24,22 +24,39 @@ def write_env(name: str, value: str, path: Path = ENV) -> None:
         pass
 
 
+PROVIDERS = {
+    "1": ("GEMINI_API_KEY", "gemini", "AIza", "Google Gemini (free key: https://aistudio.google.com/apikey)"),
+    "2": ("ANTHROPIC_API_KEY", "anthropic", "sk-ant-", "Anthropic Claude (paid API credits: https://console.anthropic.com/)"),
+}
+
+
 def main() -> int:
-    print("\n  M.R.X. — Anthropic API key setup")
-    print("  Get a key at https://console.anthropic.com/  (it starts with  sk-ant-)")
-    print(f"  It will be saved to:  {ENV}\n")
-    key = input("  Paste your API key here and press Enter: ").strip().strip('"').strip("'")
+    print("\n  M.R.X. — AI key setup\n")
+    for k, (_, _, _, label) in PROVIDERS.items():
+        print(f"    {k}) {label}")
+    choice = input("\n  Which one? Enter 1 or 2 [1]: ").strip() or "1"
+    if choice not in PROVIDERS:
+        print("  Please enter 1 or 2.")
+        return 1
+    name, provider, prefix, label = PROVIDERS[choice]
+    print(f"\n  It will be saved to:  {ENV}\n")
+    key = input(f"  Paste your {label.split(' (')[0]} key here and press Enter: ").strip().strip('"').strip("'")
     if not key:
         print("\n  Nothing entered — nothing changed.")
         return 1
-    if not key.startswith("sk-ant-") or " " in key:
-        print("\n  That does not look like an Anthropic key (it should start with sk-ant- and contain no spaces).")
+    if not key.startswith(prefix) or " " in key:
+        print(f"\n  That does not look like a {label.split(' (')[0]} key (expected to start with {prefix} and contain no spaces).")
         if input("  Save it anyway? [y/N] ").strip().lower() != "y":
             return 1
-    write_env("ANTHROPIC_API_KEY", key)
-    print("\n  Saved. Testing the connection …\n")
+    write_env(name, key)
     sys.path.insert(0, str(ROOT))
-    os.environ["ANTHROPIC_API_KEY"] = key
+    os.environ[name] = key
+    try:
+        from mrx.core.config import Settings
+        Settings().update({"ai": {"provider": provider}})   # use the provider you just configured first
+    except Exception as e:  # noqa: BLE001 - preference is a convenience only
+        print(f"  (could not save the provider preference: {e})")
+    print("\n  Saved. Testing the connection …\n")
     from mrx.doctor import run
     code = run()
     print("\n  Now start M.R.X. with run.bat — it will pick the key up automatically." if code == 0

@@ -16,7 +16,8 @@ from ..tools.registry import READ_ONLY as _READ_ONLY, ToolResult
 from . import planner
 from .context import Context
 from .language import detect_language
-from .llm import AnthropicProvider, LLMError, LLMProvider, ToolUse
+from .gemini import GeminiProvider
+from .llm import AnthropicProvider, LLMError, LLMProvider, Router, ToolUse
 from .tasks import FINAL, Task, TaskManager
 
 log = logging.getLogger("mrx.agent")
@@ -90,7 +91,7 @@ def describe_call(name: str, args: dict) -> str:
 class Agent:
     def __init__(self, rt, provider: LLMProvider | None = None):
         self.rt = rt
-        self.provider: LLMProvider = provider or AnthropicProvider(rt)
+        self.provider: LLMProvider = provider or Router(rt, {"anthropic": AnthropicProvider(rt), "gemini": GeminiProvider(rt)})
         self.contexts: dict[str, Context] = {}
         self.tasks = TaskManager(rt)
         self.last_user_command: dict[str, str] = {}
@@ -170,12 +171,22 @@ class Agent:
             await bus.emit("agent.thinking", {"task_id": task.id, "engine": engine}, task_id=task.id)
             await tm.set(task, status="RUNNING", outcome="EXECUTING", action="Working")
             if engine == "llm":
-                try:
-                    final_text = await self._llm_loop(task, text, lang, ctx, memories, results)
-                except LLMError as e:
-                    if results:
-                        final_text = f"The AI provider failed part-way: {e}"
-                    else:  # nothing has run yet → degrade to the local engine rather than failing outright
+                chain = self.provider.chain()
+                for i, prov in enumerate(chain):
+                    try:
+                        final_text = await self._llm_loop(task, text, lang, ctx, memories, results, prov)
+                        self.rt.health["ai"] = {"state": "CONNECTED", "last_ok": time.time(), "error": None}
+                        break
+                    except LLMError as e:
+                        if hasattr(self.provider, "penalize"):
+                            self.provider.penalize(prov, e)
+                        self.rt.health["ai"] = {"state": "OFFLINE" if i == len(chain) - 1 else "DEGRADED", "last_ok": None, "error": str(e)}
+                        if results:                              # actions already ran: never restart on another model
+                            final_text = f"The AI provider failed part-way: {e}"
+                            break
+                        if i < len(chain) - 1:                   # nothing ran yet: try the next provider
+                            await tm.step(task, f"{prov.describe()} unavailable — trying {chain[i + 1].describe()}", "warn", str(e))
+                            continue
                         await tm.step(task, "AI provider unavailable — using offline command engine", "warn", str(e))
                         final_text = await self._local_loop(task, text, ctx, results, llm_error=str(e))
             else:
@@ -214,7 +225,8 @@ class Agent:
             await self._say(cid, f"That failed unexpectedly: {type(e).__name__}: {e}", task.id)
 
     # ---------------------------------------------------------------------------------------- LLM engine
-    async def _llm_loop(self, task: Task, text: str, lang: dict, ctx: Context, memories: list[dict], results: list[ToolResult]) -> str:
+    async def _llm_loop(self, task: Task, text: str, lang: dict, ctx: Context, memories: list[dict], results: list[ToolResult],
+                        prov: LLMProvider) -> str:
         cfg = self.rt.settings.get("ai", {})
         tm, reg, bus = self.tasks, self.rt.registry, self.rt.bus
         mem_block = "\n".join(f"- [{m['category']}] {m['content']}" for m in memories) or "none"
@@ -234,7 +246,8 @@ class Agent:
         if clean and clean[-1]["role"] == "user":
             clean.pop()
         messages = clean + [{"role": "user", "content": volatile}]
-        ctx.add_turn("user", text)
+        if not (ctx.history and ctx.history[-1] == {"role": "user", "text": text}):
+            ctx.add_turn("user", text)
         schemas = reg.llm_schemas()
         answer = ""
         max_steps = int(cfg.get("max_steps", 12))
@@ -245,7 +258,7 @@ class Agent:
 
         for n in range(max_steps):
             await tm.checkpoint(task)
-            turn = await self.provider.stream_turn(SYSTEM_PROMPT, messages, schemas, on_text)
+            turn = await prov.stream_turn(SYSTEM_PROMPT, messages, schemas, on_text)
             messages.append({"role": "assistant", "content": turn.raw_content})
             answer = turn.text
             if turn.stop_reason == "refusal":
@@ -273,7 +286,7 @@ class Agent:
                 ctx.update_from(tu.name, tu.input, res.result if res.success else None)
                 await self._finish_step(task, step_idx[tu.id], tu.name, tu.input, res)
                 payload.append((tu.id, res.to_llm(), not res.success))
-            messages.append(self.provider.tool_result_message(payload))
+            messages.append(prov.tool_result_message(payload))
         return (answer.strip() + f"\n\n(Stopped after {max_steps} steps to avoid looping; the task may be incomplete.)").strip()
 
     async def _finish_step(self, task: Task, idx: int, name: str, args: dict, res: ToolResult) -> None:
@@ -288,7 +301,8 @@ class Agent:
     async def _local_loop(self, task: Task, text: str, ctx: Context, results: list[ToolResult],
                           why: str = "", llm_error: str = "") -> str:
         tm, reg = self.tasks, self.rt.registry
-        ctx.add_turn("user", text)
+        if not (ctx.history and ctx.history[-1] == {"role": "user", "text": text}):
+            ctx.add_turn("user", text)
         lines: list[str] = []
         clauses = planner.split_clauses(text)
         unmapped: list[str] = []
@@ -337,8 +351,8 @@ class Agent:
         if llm_error:
             return (f"The AI engine could not be used: {llm_error} "
                     "Fix it in Settings → AI (use “Test AI connection”); meanwhile simple commands still work.")
-        return ("The AI engine is not active — " + (why or "no API key") + ". Paste your key in Settings → Security "
-                "(takes effect immediately, no restart), or set ANTHROPIC_API_KEY in the same window before starting run.bat.")
+        return ("The AI engine is not active — " + (why or "no API key") + ". Click “Enable AI engine…” on the dashboard and paste a key "
+                "(a free Google Gemini key works: https://aistudio.google.com/apikey). It takes effect immediately, no restart.")
 
     def _render_local(self, it: planner.Intent, r: ToolResult) -> str:
         if not r.success:

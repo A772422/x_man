@@ -456,7 +456,7 @@ def tools() -> list[Tool]:
         Tool("extract_structured", "Extract text/attributes of elements matching a CSS selector.", {"selector": S, "attributes": {"type": "array", "items": S}, "limit": I}, ["selector"], extract_structured, plugin="browser", scope=K),
         Tool("click_element", "Click an element; tries selector, role/name, label and visible text in turn.", {"selector": S, "text": S, "role": S, "name": S, "label": S, "double": B}, [], click_element, plugin="browser", scope=K),
         Tool("type_text", "Type into a form field (selector, label or placeholder).", {"text": S, "selector": S, "label": S, "placeholder": S, "submit": B, "clear": B}, ["text"], type_text, plugin="browser", scope=K),
-        Tool("fill_form", "Fill several fields: [{selector|label|placeholder, value}].", {"fields": {"type": "array", "items": {"type": "object"}}}, ["fields"], fill_form, plugin="browser", scope=K),
+        Tool("fill_form", "Fill several fields: [{selector|label|placeholder, value}].", {"fields": {"type": "array", "items": {"type": "object", "properties": {"selector": S, "label": S, "placeholder": S, "value": S}, "required": ["value"]}}}, ["fields"], fill_form, plugin="browser", scope=K),
         Tool("scroll_page", "Scroll the page.", {"direction": {"type": "string", "enum": ["up", "down"]}, "amount": I}, [], scroll_page, plugin="browser", scope=K),
         Tool("wait_for", "Wait for a selector or text to appear.", {"selector": S, "text": S, "timeout_s": {"type": "number"}}, [], wait_for, plugin="browser", scope=K),
         Tool("run_javascript", "Execute JavaScript in the current page.", {"script": S}, ["script"], run_javascript, risk=2, plugin="browser", scope=K),

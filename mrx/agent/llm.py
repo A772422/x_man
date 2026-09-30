@@ -75,9 +75,19 @@ class LLMProvider(ABC):
     @abstractmethod
     def tool_result_message(self, results: list[tuple[str, str, bool]]) -> dict: ...
 
+    def describe(self) -> str:
+        return self.name
+
+    def chain(self) -> list["LLMProvider"]:
+        """Providers to try, in order, for one task."""
+        return [self] if self.available()[0] else []
+
 
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
+
+    def describe(self) -> str:
+        return f"Claude · {self.rt.settings.get('ai.model', 'claude-opus-5-5')}"
 
     def __init__(self, rt):
         self.rt = rt
@@ -177,3 +187,55 @@ class AnthropicProvider(LLMProvider):
         return Turn(text, uses, final.stop_reason or "end_turn", final.content,
                     {"in": u.input_tokens, "out": u.output_tokens,
                      "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0})
+
+
+class Router(LLMProvider):
+    """Chooses among providers (Claude, Gemini). The preferred one (Settings → AI) goes first; the others are used as
+    fallbacks. A provider that fails for billing/key/rate reasons is skipped for a while instead of being retried."""
+    name = "router"
+    PENALTY_S = {"billing": 900, "key": 900, "rate": 60}
+
+    def __init__(self, rt, providers: dict[str, LLMProvider]):
+        self.rt = rt
+        self.providers = providers
+        self._bad: dict[str, float] = {}
+
+    def _order(self) -> list[str]:
+        pref = self.rt.settings.get("ai.provider", "auto")
+        names = list(self.providers)
+        if pref in self.providers:
+            names.remove(pref)
+            names.insert(0, pref)
+        return names
+
+    def chain(self) -> list[LLMProvider]:
+        import time
+        now = time.time()
+        usable = [self.providers[n] for n in self._order() if self.providers[n].available()[0]]
+        healthy = [p for p in usable if self._bad.get(p.name, 0) < now]
+        return healthy or usable       # if everything is penalised, still try (the penalty may be stale)
+
+    def penalize(self, provider: LLMProvider, err: Exception) -> None:
+        import time
+        low = str(err).lower()
+        kind = "billing" if "credits" in low else "key" if "key was rejected" in low else "rate" if "rate limit" in low else None
+        if kind:
+            self._bad[provider.name] = time.time() + self.PENALTY_S[kind]
+
+    def available(self):
+        if any(p.available()[0] for p in self.providers.values()):
+            return True, ""
+        return False, "no API key configured — a free Gemini key (GEMINI_API_KEY, https://aistudio.google.com/apikey) or an Anthropic key (ANTHROPIC_API_KEY)"
+
+    def describe(self) -> str:
+        c = self.chain()
+        return c[0].describe() if c else "none"
+
+    async def stream_turn(self, system, messages, tools, on_text):
+        c = self.chain()
+        if not c:
+            raise LLMError("No AI provider is configured.")
+        return await c[0].stream_turn(system, messages, tools, on_text)
+
+    def tool_result_message(self, results):
+        return self.chain()[0].tool_result_message(results)

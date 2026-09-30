@@ -12,8 +12,9 @@ APP_NAME = "M.R.X."
 
 DEFAULTS: dict[str, Any] = {
     "ai": {
-        "provider": "anthropic",
-        "model": "claude-opus-5-5",
+        "provider": "auto",            # auto | gemini | anthropic (the other one is used as a fallback)
+        "model": "claude-opus-5-5",     # Anthropic model
+        "gemini_model": "gemini-2.5-flash",
         "effort": "medium",
         "max_tokens": 16000,
         "streaming": True,

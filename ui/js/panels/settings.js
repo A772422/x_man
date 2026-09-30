@@ -6,10 +6,11 @@ const setPath = (o, path, v) => { const ks = path.split('.'); let c = o; ks.slic
 const getPath = (o, path) => path.split('.').reduce((c, k) => (c == null ? undefined : c[k]), o);
 
 export function create(ctx) {
-  const root = ctx.root; let cfg = null; let secrets = null; let tools = []; let plugins = []; let devices = []; let sec = ''; let mics = [];
+  const root = ctx.root; let cfg = null; let secrets = null; let tools = []; let plugins = []; let devices = []; let sec = ''; let mics = []; let gmodels = [];
   let section = 'AI';
   async function load() {
     try { [cfg, secrets, { tools, plugins }] = await Promise.all([api('/api/settings').then((d) => d.settings), api('/api/secrets'), api('/api/tools')]); devices = (await api('/api/network/devices')).known; } catch (e) { ctx.toast(e.message, 'err'); }
+    try { gmodels = (await api('/api/ai/models')).gemini || []; } catch { gmodels = []; }
     mics = await ctx.voice.devices(); render();
   }
   async function save(path, value, msg = 'Saved') { const patch = setPath({}, path, value); try { cfg = (await api('/api/settings', { method: 'PATCH', body: patch })).settings; ctx.settingsChanged(cfg); ctx.toast(msg, 'ok'); } catch (e) { ctx.toast(e.message, 'err'); } render(); }
@@ -22,13 +23,14 @@ export function create(ctx) {
     return h('label', { class: 'field' }, label, input, opts.help ? h('span', { class: 'dim' }, opts.help) : null);
   };
   const S = {
-    AI: () => [field('Model', 'ai.model', 'text', { list: 'models', help: 'Claude model ID used by the agent (requires ANTHROPIC_API_KEY).' }), h('datalist', { id: 'models' }, ...['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-4-5'].map((m) => h('option', { value: m }))),
-      field('Reasoning effort', 'ai.effort', 'select', { options: [['', 'model default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']], help: 'Leave on “model default” for models that do not support effort (e.g. Haiku).' }),
+    AI: () => [field('Preferred provider', 'ai.provider', 'select', { options: [['auto', 'Automatic (Claude first, Gemini as fallback)'], ['gemini', 'Google Gemini (free tier available)'], ['anthropic', 'Anthropic Claude (paid)']], help: 'The other provider is used automatically if the preferred one fails (no credits, rate limit, key problem).' }),
+      field('Gemini model', 'ai.gemini_model', 'text', { list: 'gmodels', help: 'e.g. gemini-2.5-flash (free tier). The list is loaded from your key when available.' }), h('datalist', { id: 'gmodels' }, ...gmodels.map((m) => h('option', { value: m }))),
+      field('Claude model', 'ai.model', 'text', { list: 'models', help: 'Claude model ID (requires an Anthropic key with credits).' }), h('datalist', { id: 'models' }, ...['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-4-5'].map((m) => h('option', { value: m }))),
+      field('Claude reasoning effort', 'ai.effort', 'select', { options: [['', 'model default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']], help: 'Claude only. Leave on “model default” for models that do not support effort (e.g. Haiku).' }),
       field('Max output tokens', 'ai.max_tokens', 'number', { min: 1024, max: 128000 }), field('Max agent steps per task', 'ai.max_steps', 'number', { min: 1, max: 50, help: 'Hard limit that prevents runaway loops.' }),
-      field('Streaming', 'ai.streaming', 'bool', { text: 'Stream responses (always on in this build)' }),
-      h('p', { class: 'dim' }, 'Temperature and context length are managed by the model itself; current Claude models do not accept sampling overrides.'),
-      h('div', { class: 'muted' }, `Provider: Anthropic · engine now: ${ctx.state.status?.engine === 'llm' ? 'AI engine online' : 'offline command engine'}`),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: async () => { ctx.toast('Testing…'); try { const r = await api('/api/ai/test', { method: 'POST' }); r.ok ? ctx.toast(`AI engine works (${r.model}, ${r.ms} ms)`, 'ok', 6000) : ctx.toast(`Problem: ${r.error}`, 'err', 12000); } catch (e) { ctx.toast(e.message, 'err'); } ctx.refreshStatus(); } }, 'Test AI connection'))],
+      h('p', { class: 'dim' }, 'Temperature and context length are managed by the providers. The free Gemini tier is rate-limited (requests per minute and per day); when it is reached M.R.X. says so and can fall back to Claude if a key is set.'),
+      h('div', { class: 'muted' }, `Engine now: ${ctx.state.status?.engine === 'llm' ? 'AI online — ' + ctx.state.status.model : 'offline command engine'}`),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: async () => { ctx.toast('Testing…'); try { const r = await api('/api/ai/test', { method: 'POST' }); (r.results?.length ? r.results : [r]).forEach((x) => x.ok ? ctx.toast(`${x.model || 'AI'} works (${x.ms} ms)`, 'ok', 6000) : ctx.toast(`${x.model || x.provider || 'AI'}: ${x.error}`, 'err', 14000)); } catch (e) { ctx.toast(e.message, 'err'); } ctx.refreshStatus(); } }, 'Test AI connection'), h('button', { class: 'btn', onclick: () => ctx.askSecret('AI') }, 'Add / change API key…'))],
     Voice: () => [field('Input mode', 'voice.mode', 'select', { options: [['push_to_talk', 'Push-to-talk (click 🎤 / Ctrl+Space)'], ['wake_word', 'Wake word'], ['continuous', 'Continuous']] }),
       field('Recognition language', 'voice.language', 'select', { options: LANGS }), field('Wake word', 'voice.wake_word', 'text', { help: 'Default “hey mrx”. Several spellings recognisers produce are accepted.' }),
       field('Speech speed', 'voice.speech_rate', 'number', { min: 0.5, max: 2, step: 0.1 }), field('Speak replies aloud', 'voice.speak_replies', 'bool', { text: 'Text-to-speech on' }),

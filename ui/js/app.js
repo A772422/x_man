@@ -45,23 +45,25 @@ function renderModal() {
 async function testAi() {
   toast('Testing the AI connection…', '', 2500);
   try { const r = await api('/api/ai/test', { method: 'POST' });
-    if (r.ok) toast(`AI engine works (${r.model}, ${r.ms} ms)`, 'ok', 6000); else toast(`AI engine problem: ${r.error}`, 'err', 12000);
+    (r.results?.length ? r.results : [{ ok: r.ok, model: 'AI', error: r.error, ms: r.ms }]).forEach((x) => x.ok ? toast(`${x.model} works (${x.ms} ms)`, 'ok', 6000) : toast(`${x.model || x.provider}: ${x.error}`, 'err', 14000));
   } catch (e) { toast(`Test failed: ${e.message}`, 'err', 8000); }
   refreshStatus();
 }
-function askKey(name = 'ANTHROPIC_API_KEY') {
-  const isAi = name === 'ANTHROPIC_API_KEY';
-  const root = $('#modal-root'); const inp = h('input', { type: 'password', class: 'grow', placeholder: isAi ? 'sk-ant-…' : 'value', autocomplete: 'off', spellcheck: 'false' });
+function askKey(name = 'AI') {
+  const isAi = name === 'AI' || name === 'ANTHROPIC_API_KEY' || name === 'GEMINI_API_KEY';
+  const pick = h('select', {}, h('option', { value: 'GEMINI_API_KEY' }, 'Google Gemini — free key from aistudio.google.com/apikey'), h('option', { value: 'ANTHROPIC_API_KEY', selected: name === 'ANTHROPIC_API_KEY' }, 'Anthropic Claude — paid API credits'));
+  if (name === 'GEMINI_API_KEY') pick.value = 'GEMINI_API_KEY';
+  const root = $('#modal-root'); const inp = h('input', { type: 'password', class: 'grow', placeholder: isAi ? 'paste your key here' : 'value', autocomplete: 'off', spellcheck: 'false' });
   const close = () => clear(root); const msg = h('div', { class: 'muted', style: 'min-height:18px' });
   const save = async (allowFile = false) => {
     const v = inp.value.trim(); if (!v) return; msg.textContent = 'Saving…'; fileBtn.style.display = 'none';
-    try { const r = await api('/api/secrets/' + name, { method: 'POST', body: { value: v, allow_file: allowFile } }); inp.value = ''; close(); toast(`Key stored in ${r.stored === 'file' ? 'a private file (~/.mrx/.env)' : 'the OS keychain'}`, 'ok', 4000); await refreshStatus(); if (isAi) await testAi(); if (active === 'settings') panels.settings.show(); }
+    try { const r = await api('/api/secrets/' + (isAi ? pick.value : name), { method: 'POST', body: { value: v, allow_file: allowFile } }); inp.value = ''; close(); toast(`Key stored in ${r.stored === 'file' ? 'a private file (~/.mrx/.env)' : 'the OS keychain'}`, 'ok', 4000); if (isAi) await api('/api/settings', { method: 'PATCH', body: { ai: { provider: pick.value === 'GEMINI_API_KEY' ? 'gemini' : 'anthropic' } } }); await refreshStatus(); if (isAi) await testAi(); if (active === 'settings') panels.settings.show(); }
     catch (e) { if (e.data?.needs_file_fallback) { msg.textContent = 'The OS keychain did not accept/return the value. You can store it in a private file in your M.R.X. folder (~/.mrx/.env) instead.'; fileBtn.style.display = ''; } else msg.textContent = e.message; }
   };
   const fileBtn = h('button', { class: 'btn', style: 'display:none', onclick: () => save(true) }, 'Save to private file instead');
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(false); if (e.key === 'Escape') close(); });
   put(clear(root), h('div', { class: 'modal-back', onclick: (e) => e.target === e.currentTarget && close() }, h('div', { class: 'modal', role: 'dialog', 'aria-label': 'Enter secret' },
-    h('h3', {}, isAi ? 'Enable the AI engine' : `Set ${name}`), h('p', { class: 'muted' }, isAi ? 'Paste your Anthropic API key. It is stored in the OS keychain (Windows Credential Manager) or a private file, takes effect immediately, and is never shown again or sent anywhere except Anthropic.' : `Stored privately and used only by M.R.X. It is never shown again.`),
+    h('h3', {}, isAi ? 'Enable the AI engine' : `Set ${name}`), isAi ? h('div', { class: 'row' }, pick) : null, h('p', { class: 'muted' }, isAi ? 'Choose the provider and paste its API key. It is stored in the OS keychain (Windows Credential Manager) or a private file, takes effect immediately, and is never shown again or sent anywhere except that provider. The free Gemini tier has request-per-minute/day limits.' : `Stored privately and used only by M.R.X. It is never shown again.`),
     h('div', { class: 'row' }, inp), msg, h('div', { class: 'row' }, h('button', { class: 'btn', onclick: close }, 'Cancel'), fileBtn, h('button', { class: 'btn primary', onclick: () => save(false) }, 'Save & test'))))); inp.focus();
 }
 
@@ -126,7 +128,7 @@ function render() {
     const note = $('#engine-note'); const online = state.status.engine === 'llm'; const sig = String(online) + state.status.model;
     if (note.dataset.sig !== sig) { note.dataset.sig = sig; clear(note);
       put(note, online ? `AI engine online · ${state.status.model} ` : 'Offline command engine — simple commands only. ',
-        h('button', { class: 'btn small', onclick: online ? testAi : askKey }, online ? 'Test connection' : 'Enable AI engine…')); }
+        h('button', { class: 'btn small', onclick: online ? () => testAi() : () => askKey('AI') }, online ? 'Test connection' : 'Enable AI engine…')); }
   }
   $('#console-task').textContent = state.activeTask && state.tasks[state.activeTask] ? `${state.tasks[state.activeTask].command} — ${(state.tasks[state.activeTask].outcome && state.tasks[state.activeTask].status === 'COMPLETED' ? state.tasks[state.activeTask].outcome : state.tasks[state.activeTask].status).replace(/_/g, ' ')}` : '';
   if (active === 'tasks') panels.tasks.update(); if (active === 'network') panels.network.update?.();

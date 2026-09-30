@@ -31,7 +31,7 @@ def run() -> int:
     rt = Runtime()
     print(f"\nData folder: {data_dir()}")
     print(f"Secret storage: {rt.secrets.backend}")
-    for name in ("ANTHROPIC_API_KEY", "YOUTUBE_API_KEY"):
+    for name in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "YOUTUBE_API_KEY"):
         where = rt.secrets.locate(name)
         v = rt.secrets.get(name) or ""
         shown = f"{v[:7]}…{v[-4:]} ({len(v)} chars)" if v else "-"
@@ -40,21 +40,27 @@ def run() -> int:
         print(f"  .env file {f}: {'exists' if f.exists() else 'not present'}")
     print(f"Model: {rt.settings.get('ai.model')}")
     ok, why = rt.agent.provider.available()
+    print(f"AI provider preference: {rt.settings.get('ai.provider')}  (Gemini model: {rt.settings.get('ai.gemini_model')}, Claude model: {rt.settings.get('ai.model')})")
     if not ok:
         print(f"\nAI engine: NOT ACTIVE - {why}")
         print("Fix: run setup_key.bat (Windows) / ./setup_key.sh, then start M.R.X. again.")
         return 1
 
-    async def ping() -> str:
+    async def ping(p) -> str:
         async def _n(_t: str) -> None: ...
         t0 = time.perf_counter()
-        turn = await asyncio.wait_for(rt.agent.provider.stream_turn("Reply with the single word: ok", [{"role": "user", "content": "ping"}], [], _n), 75)
-        return f"OK - model replied {turn.text.strip()!r} in {int((time.perf_counter() - t0) * 1000)} ms"
-    try:
-        print("\nLive AI test:", asyncio.run(ping()))
-        return 0
-    except LLMError as e:
-        print(f"\nLive AI test: FAILED - {e}")
-    except Exception as e:  # noqa: BLE001
-        print(f"\nLive AI test: FAILED - {type(e).__name__}: {e}")
-    return 1
+        turn = await asyncio.wait_for(p.stream_turn("Reply with the single word: ok", [{"role": "user", "content": "ping"}], [], _n), 75)
+        return f"OK - replied {turn.text.strip()!r} in {int((time.perf_counter() - t0) * 1000)} ms"
+    provs = getattr(rt.agent.provider, "providers", {"default": rt.agent.provider})
+    good = 0
+    for n, p in provs.items():
+        if not p.available()[0]:
+            continue
+        try:
+            print(f"\nLive test [{p.describe()}]:", asyncio.run(ping(p)))
+            good += 1
+        except LLMError as e:
+            print(f"\nLive test [{p.describe()}]: FAILED - {e}")
+        except Exception as e:  # noqa: BLE001
+            print(f"\nLive test [{p.describe()}]: FAILED - {type(e).__name__}: {e}")
+    return 0 if good else 1

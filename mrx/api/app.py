@@ -24,7 +24,7 @@ from ..tools.registry import ToolError
 
 UI_DIR = Path(__file__).resolve().parents[2] / "ui"
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
-SECRET_NAMES = ["ANTHROPIC_API_KEY", "YOUTUBE_API_KEY", "MRX_EMAIL_ADDRESS", "MRX_EMAIL_PASSWORD", "MRX_IMAP_HOST",
+SECRET_NAMES = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "YOUTUBE_API_KEY", "MRX_EMAIL_ADDRESS", "MRX_EMAIL_PASSWORD", "MRX_IMAP_HOST",
                 "MRX_SMTP_HOST", "MRX_MASTODON_URL", "MRX_MASTODON_TOKEN"]
 
 
@@ -378,24 +378,38 @@ def create_app(rt: Runtime | None = None, token: str | None = None) -> FastAPI:
 
     @app.post("/api/ai/test")
     async def ai_test():
-        """Makes one tiny real request so the exact failure (bad key, model, network…) is visible."""
+        """One tiny real request per configured provider, so the exact failure (key, quota, model, network…) is visible."""
         from ..agent.llm import LLMError
-        okp, why = rt.agent.provider.available()
-        if not okp:
-            return JSONResponse({"ok": False, "error": why}, status_code=200)
-        t0 = time.perf_counter()
+        provs = getattr(rt.agent.provider, "providers", None) or {rt.agent.provider.name: rt.agent.provider}
+        configured = {n: p for n, p in provs.items() if p.available()[0]}
+        if not configured:
+            return {"ok": False, "error": rt.agent.provider.available()[1], "results": []}
 
         async def _noop(_t: str) -> None: ...
-        try:
-            turn = await asyncio.wait_for(rt.agent.provider.stream_turn("Reply with the single word: ok",
-                                                                        [{"role": "user", "content": "ping"}], [], _noop), 75)
-        except LLMError as e:
-            return {"ok": False, "error": str(e)}
-        except asyncio.TimeoutError:
-            return {"ok": False, "error": "The AI provider did not answer within 75 s."}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        return ok(reply=(turn.text or "")[:80], ms=int((time.perf_counter() - t0) * 1000), model=rt.settings.get("ai.model"))
+
+        async def one(n, p):
+            t0 = time.perf_counter()
+            try:
+                turn = await asyncio.wait_for(p.stream_turn("Reply with the single word: ok", [{"role": "user", "content": "ping"}], [], _noop), 75)
+                return {"provider": n, "ok": True, "reply": (turn.text or "")[:80], "ms": int((time.perf_counter() - t0) * 1000), "model": p.describe()}
+            except LLMError as e:
+                return {"provider": n, "ok": False, "error": str(e), "model": p.describe()}
+            except asyncio.TimeoutError:
+                return {"provider": n, "ok": False, "error": "no answer within 75 s", "model": p.describe()}
+            except Exception as e:  # noqa: BLE001
+                return {"provider": n, "ok": False, "error": f"{type(e).__name__}: {e}", "model": p.describe()}
+        results = await asyncio.gather(*[one(n, p) for n, p in configured.items()])
+        good = next((r for r in results if r["ok"]), None)
+        rt.health["ai"] = ({"state": "CONNECTED", "last_ok": time.time(), "error": None} if good
+                           else {"state": "OFFLINE", "last_ok": None, "error": "; ".join(f"{r['provider']}: {r['error']}" for r in results)})
+        if good:
+            return ok(reply=good["reply"], ms=good["ms"], model=good["model"], results=results)
+        return {"ok": False, "error": "; ".join(f"{r['provider']}: {r['error']}" for r in results), "results": results}
+
+    @app.get("/api/ai/models")
+    async def ai_models():
+        g = getattr(rt.agent.provider, "providers", {}).get("gemini")
+        return ok(gemini=(await g.list_models()) if g and g.available()[0] else [])
 
     @app.get("/api/settings")
     async def settings_get():

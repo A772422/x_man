@@ -85,14 +85,21 @@ class Runtime:
         self.settings.update({"plugins": {"disabled": sorted(disabled)}})
         self.load_plugins()
 
+    def _ai_status(self, engine: str, why: str) -> dict:
+        if engine != "llm":
+            return {"state": "DEGRADED", "detail": f"offline command engine only — {why}"}
+        h = self.health.get("ai")
+        if not h:
+            return {"state": "UNKNOWN", "detail": f"key configured ({self.agent.provider.describe()}), not used yet — use “Test connection”"}
+        return {"state": h["state"], "detail": h["error"] or f"working ({self.agent.provider.describe()})"}
+
     # ---- status ------------------------------------------------------------------------------------
     def status(self) -> dict:
         engine, why = self.agent.engine()
         email_ok, email_why = self.email.configured()
         yt = self.secrets.has("YOUTUBE_API_KEY")
         services = {
-            "ai": {"state": "CONNECTED" if engine == "llm" else "DEGRADED",
-                   "detail": "AI engine online" if engine == "llm" else f"offline command engine only — {why}"},
+            "ai": self._ai_status(engine, why),
             "filesystem": {"state": "LOCAL", "detail": "local"},
             "windows": {"state": "LOCAL", "detail": "local"},
             "memory": {"state": "LOCAL" if self.settings.get("memory.enabled", True) else "OFFLINE", "detail": "local database"},
@@ -112,7 +119,7 @@ class Runtime:
                 services[svc] = {"state": h["state"], "detail": h["error"]}
         from . import __version__
         return {"version": __version__, "engine": engine, "services": services, "secrets_backend": self.secrets.backend,
-                "model": self.settings.get("ai.model"), "ui_clients": self._ui}
+                "model": self.agent.provider.describe(), "providers": {n: p.available()[0] for n, p in getattr(self.agent.provider, "providers", {}).items()}, "ui_clients": self._ui}
 
     async def close(self) -> None:
         await self.browser.close()

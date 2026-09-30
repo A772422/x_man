@@ -18,7 +18,7 @@ async def test_greetings_get_a_reply_without_ai(rt):
     for g in ("hello", "hey", "Hi", "hey mrx", "Hello there!", "namaste", "नमस्ते", "good morning"):
         t = await say(rt, g)
         assert t.result.startswith("Hello! I'm M.R.X."), (g, t.result)
-        assert "AI engine is not active" in t.result and "Settings → Security" in t.result   # says how to fix it
+        assert "AI engine is not active" in t.result and "Enable AI engine" in t.result and "Gemini" in t.result   # says how to fix it
     t = await say(rt, "what can you do")
     assert "operates your computer" in t.result
 

@@ -32,6 +32,14 @@ pull over it; delete the file and `git pull` instead). It downloads the latest v
 if you cloned), keeps your `.env`, settings and memories, then tells you to restart. **`doctor.bat`** prints diagnostics
 (never secrets) and tests the AI connection. The version is shown in the app header.
 
+### Free AI with Google Gemini
+
+M.R.X. supports **Google Gemini** as well as Claude. Get a free key at https://aistudio.google.com/apikey, then either run
+`setup_key.bat` and choose **1**, or click **Enable AI engine…** on the dashboard. The free tier has request-per-minute and
+per-day limits (M.R.X. tells you when one is hit); default model `gemini-2.5-flash`, changeable in Settings → AI. If both keys are
+set, the preferred provider (Settings → AI) is used first and the other is a fallback — e.g. Claude out of credits → Gemini.
+The Gemini path is tested against a mocked stream and Google's real request validation, but **not yet with a live key**.
+
 ### Setting your API key (any one of these)
 
 0. **Simplest:** double-click **`setup_key.bat`**, paste the key, press Enter. It saves `.env` in the M.R.X. folder and tests it.
@@ -49,7 +57,7 @@ if you cloned), keeps your `.env`, settings and memories, then tells you to rest
 
 | Key | Enables |
 |---|---|
-| `ANTHROPIC_API_KEY` | The AI engine: open-ended requests, multi-step planning, summarising, writing, recovery by changing strategy |
+| `GEMINI_API_KEY` (free) or `ANTHROPIC_API_KEY` | The AI engine: open-ended requests, multi-step planning, summarising, writing, recovery by changing strategy |
 | `YOUTUBE_API_KEY` | YouTube search (playing a pasted URL/ID works without it) |
 | `MRX_EMAIL_*` | Email over IMAP/SMTP (app password) |
 | `MRX_MASTODON_*` | Mastodon provider |
@@ -78,7 +86,7 @@ Nothing here is simulated. Each capability either works against the real system/
 | Voice: wake word, push-to-talk, continuous, streaming recognition, sentence-streamed TTS, barge-in, multilingual | Implemented in the browser (Web Speech API; Chrome/Edge). Uses the system default mic/speaker. While M.R.X. speaks, only "stop"/the wake word interrupts (to avoid hearing itself). Logic unit-tested; **real microphone use is untested here** |
 | Calendar | **Not implemented** |
 | Gmail/Outlook OAuth flows | **Not implemented** (IMAP/SMTP app-password provider only; the provider interface is ready) |
-| AI engine (Anthropic, streaming tool use) | Implemented; exercised in tests with a scripted stand-in model. **Not run against the live API in this build** |
+| AI engine (Claude and Gemini, streaming tool use, automatic fallback) | Implemented; exercised in tests with scripted/mocked models. Claude's request path was confirmed to reach the live API (billing error seen); **neither has completed a full task with a live key yet** |
 
 ## Safety model
 
@@ -115,7 +123,7 @@ Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash
 
 ```bash
 pip install -r requirements-dev.txt && playwright install chromium   # dev = core + optional + pytest
-python -m pytest            # 115 tests; browser tests skip if Chromium cannot start
+python -m pytest            # 128 tests; browser tests skip if Chromium cannot start
 npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
 ```
 
