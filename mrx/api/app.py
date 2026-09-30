@@ -410,11 +410,10 @@ def create_app(rt: Runtime | None = None, token: str | None = None) -> FastAPI:
 
     @app.get("/api/secrets")
     async def secrets_list():
-        import os
         out = {}
         for n in SECRET_NAMES:
-            src = ("file" if rt.secrets.in_file(n) else "environment") if os.environ.get(n) else ("keychain" if rt.secrets.get(n) else "none")
-            out[n] = {"set": src != "none", "source": src}
+            where = rt.secrets.locate(n)
+            out[n] = {"set": bool(where), "source": ", ".join(where) or "none"}
         return ok(secrets=out, backend=rt.secrets.backend)
 
     @app.post("/api/secrets/{name}")

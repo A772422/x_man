@@ -110,7 +110,8 @@ class Runtime:
             h = self.health.get(svc)
             if h and h["state"] in ("OFFLINE", "DEGRADED") and h.get("error") and "not configured" not in (h["error"] or ""):
                 services[svc] = {"state": h["state"], "detail": h["error"]}
-        return {"engine": engine, "services": services, "secrets_backend": self.secrets.backend,
+        from . import __version__
+        return {"version": __version__, "engine": engine, "services": services, "secrets_backend": self.secrets.backend,
                 "model": self.settings.get("ai.model"), "ui_clients": self._ui}
 
     async def close(self) -> None:

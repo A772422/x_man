@@ -41,7 +41,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="M.R.X. — real-time autonomous desktop AI agent")
     ap.add_argument("--port", type=int, default=int(os.environ.get("MRX_PORT", 8765)))
     ap.add_argument("--no-browser", action="store_true", help="do not open the interface automatically")
+    ap.add_argument("--doctor", action="store_true", help="print diagnostics and test the AI connection, then exit")
+    ap.add_argument("--version", action="store_true")
     args = ap.parse_args()
+    if args.version:
+        from . import __version__
+        print(__version__)
+        return
+    if args.doctor:
+        from .doctor import run
+        raise SystemExit(run())
 
     import uvicorn
     from .api.app import create_app
@@ -49,7 +58,8 @@ def main() -> None:
     token = os.environ.get("MRX_TOKEN") or secrets.token_urlsafe(24)
     app = create_app(token=token)
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"\n  M.R.X. running at {url}\n  (bound to 127.0.0.1 only; requests need this launch's token)\n")
+    from . import __version__
+    print(f"\n  M.R.X. {__version__} running at {url}\n  (bound to 127.0.0.1 only; requests need this launch's token)\n")
     if not args.no_browser:
         threading.Thread(target=lambda: (time.sleep(1.2), webbrowser.open(url)), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

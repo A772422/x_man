@@ -131,7 +131,7 @@ def test_key_saved_to_private_file_when_no_keychain(home, monkeypatch):
         assert rt.agent.engine()[0] == "llm"                               # applied immediately, no restart
         assert "sk-ant-abc" in (home / ".mrx/.env").read_text()
         listed = c.get("/api/secrets", headers=H).json()["secrets"]["ANTHROPIC_API_KEY"]
-        assert listed == {"set": True, "source": "file"} and "sk-ant" not in str(c.get("/api/secrets", headers=H).json())
+        assert listed == {"set": True, "source": "file (.env)"} and "sk-ant" not in str(c.get("/api/secrets", headers=H).json())
         assert "sk-ant" not in rt.settings.path.read_text() if rt.settings.path.exists() else True
         c.delete("/api/secrets/ANTHROPIC_API_KEY", headers=H)
         assert rt.agent.engine()[0] == "local" and "sk-ant" not in (home / ".mrx/.env").read_text()

@@ -49,18 +49,19 @@ async function testAi() {
   } catch (e) { toast(`Test failed: ${e.message}`, 'err', 8000); }
   refreshStatus();
 }
-function askKey() {
-  const root = $('#modal-root'); const inp = h('input', { type: 'password', class: 'grow', placeholder: 'sk-ant-…', autocomplete: 'off', spellcheck: 'false' });
+function askKey(name = 'ANTHROPIC_API_KEY') {
+  const isAi = name === 'ANTHROPIC_API_KEY';
+  const root = $('#modal-root'); const inp = h('input', { type: 'password', class: 'grow', placeholder: isAi ? 'sk-ant-…' : 'value', autocomplete: 'off', spellcheck: 'false' });
   const close = () => clear(root); const msg = h('div', { class: 'muted', style: 'min-height:18px' });
   const save = async (allowFile = false) => {
     const v = inp.value.trim(); if (!v) return; msg.textContent = 'Saving…'; fileBtn.style.display = 'none';
-    try { const r = await api('/api/secrets/ANTHROPIC_API_KEY', { method: 'POST', body: { value: v, allow_file: allowFile } }); inp.value = ''; close(); toast(`Key stored in ${r.stored === 'file' ? 'a private file (~/.mrx/.env)' : 'the OS keychain'}`, 'ok', 4000); await refreshStatus(); await testAi(); }
-    catch (e) { if (e.data?.needs_file_fallback) { msg.textContent = 'No OS keychain was found. You can store the key in a private file in your M.R.X. folder (~/.mrx/.env) instead.'; fileBtn.style.display = ''; } else msg.textContent = e.message; }
+    try { const r = await api('/api/secrets/' + name, { method: 'POST', body: { value: v, allow_file: allowFile } }); inp.value = ''; close(); toast(`Key stored in ${r.stored === 'file' ? 'a private file (~/.mrx/.env)' : 'the OS keychain'}`, 'ok', 4000); await refreshStatus(); if (isAi) await testAi(); if (active === 'settings') panels.settings.show(); }
+    catch (e) { if (e.data?.needs_file_fallback) { msg.textContent = 'The OS keychain did not accept/return the value. You can store it in a private file in your M.R.X. folder (~/.mrx/.env) instead.'; fileBtn.style.display = ''; } else msg.textContent = e.message; }
   };
   const fileBtn = h('button', { class: 'btn', style: 'display:none', onclick: () => save(true) }, 'Save to private file instead');
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(false); if (e.key === 'Escape') close(); });
-  put(clear(root), h('div', { class: 'modal-back', onclick: (e) => e.target === e.currentTarget && close() }, h('div', { class: 'modal', role: 'dialog', 'aria-label': 'Enable AI engine' },
-    h('h3', {}, 'Enable the AI engine'), h('p', { class: 'muted' }, 'Paste your Anthropic API key. It is stored in the OS keychain (Windows Credential Manager), takes effect immediately, and is never shown again or sent anywhere except Anthropic.'),
+  put(clear(root), h('div', { class: 'modal-back', onclick: (e) => e.target === e.currentTarget && close() }, h('div', { class: 'modal', role: 'dialog', 'aria-label': 'Enter secret' },
+    h('h3', {}, isAi ? 'Enable the AI engine' : `Set ${name}`), h('p', { class: 'muted' }, isAi ? 'Paste your Anthropic API key. It is stored in the OS keychain (Windows Credential Manager) or a private file, takes effect immediately, and is never shown again or sent anywhere except Anthropic.' : `Stored privately and used only by M.R.X. It is never shown again.`),
     h('div', { class: 'row' }, inp), msg, h('div', { class: 'row' }, h('button', { class: 'btn', onclick: close }, 'Cancel'), fileBtn, h('button', { class: 'btn primary', onclick: () => save(false) }, 'Save & test'))))); inp.focus();
 }
 
@@ -120,6 +121,7 @@ function render() {
   $('#app').dataset.avatar = st; $('#avatar').dataset.state = st; $('#avatar-label').textContent = st.toUpperCase();
   if (state.flash && state.flash.until > Date.now()) setTimeout(schedule, state.flash.until - Date.now() + 30);
   renderChips(); renderConvo(); renderConsole(); renderVoiceBar(); renderModal(); renderNavBadge();
+  if (state.status?.version) { const tg = $('.tag'); const t = `Real-time autonomous agent · v${state.status.version}`; if (tg.textContent !== t) tg.textContent = t; }
   if (state.status) {
     const note = $('#engine-note'); const online = state.status.engine === 'llm'; const sig = String(online) + state.status.model;
     if (note.dataset.sig !== sig) { note.dataset.sig = sig; clear(note);
@@ -176,7 +178,7 @@ function go(name, extra) {
 function boot() {
   const nav = $('#nav'); NAV.forEach(([k, ic, label]) => nav.append(h('button', { dataset: { p: k }, class: k === 'dashboard' ? 'active' : '', onclick: () => go(k) }, h('span', { class: 'ico' }, ic), label, k === 'tasks' ? h('span', { class: 'badge', style: 'display:none' }) : null)));
   const ctx = (name) => ({ state, root: $('#panel-' + name), send: (m) => events.send(m), toast, active: () => active, go, voice, meter,
-    settingsChanged: (c) => { cfg = c; schedule(); }, refreshStatus, clearLocal: () => { state.messages = []; state.tasks = {}; state.order = []; state.activity = []; lastMsgCount = -1; schedule(); } });
+    askSecret: askKey, settingsChanged: (c) => { cfg = c; schedule(); }, refreshStatus, clearLocal: () => { state.messages = []; state.tasks = {}; state.order = []; state.activity = []; lastMsgCount = -1; schedule(); } });
   Object.assign(panels, { monitor: monitor.create({ ...ctx('dashboard'), root: $('#monitor') }), tasks: tasks.create(ctx('tasks')), browser: browser.create(ctx('browser')), youtube: youtube.create(ctx('youtube')), files: files.create(ctx('files')),
     news: news.create(ctx('news')), map: map.create(ctx('map')), network: network.create(ctx('network')), memory: memory.create(ctx('memory')), settings: settings.create(ctx('settings')), debug: debug.create(ctx('debug')) });
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); const i = $('#input'); send(i.value); i.value = ''; });
