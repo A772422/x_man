@@ -25,7 +25,10 @@ macOS / Linux: `./install.sh` then `./run.sh`. Python 3.10+ is required.
 
 ### Updating
 
-Double-click **`update.bat`** (or `python scripts/update.py`). It downloads the latest version from GitHub (or runs `git pull`
+Double-click **`update.bat`** (or `python scripts/update.py`). If your folder is a `git clone` you can also just run
+`git pull origin claude/nice-einstein-nhlhj1` and then `update.bat` (it installs any new dependencies). Only if your folder is
+an old copy that has no `scripts/update.py` at all, download that one file first — never do this in a git clone (git will refuse to
+pull over it; delete the file and `git pull` instead). It downloads the latest version from GitHub (or runs `git pull`
 if you cloned), keeps your `.env`, settings and memories, then tells you to restart. **`doctor.bat`** prints diagnostics
 (never secrets) and tests the AI connection. The version is shown in the app header.
 
