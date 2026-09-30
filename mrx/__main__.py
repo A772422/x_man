@@ -30,6 +30,21 @@ def load_env_files(paths) -> list[str]:
     return loaded
 
 
+def check_port(port: int) -> str | None:
+    """None if free; 'mrx' if another M.R.X. answers there; 'other' if something else uses the port."""
+    import socket
+    with socket.socket() as sk:
+        sk.settimeout(0.5)
+        if sk.connect_ex(("127.0.0.1", port)) != 0:
+            return None
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
+            return "mrx" if b"M.R.X." in r.read(20000) else "other"
+    except Exception:
+        return "other"
+
+
 def main() -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -51,6 +66,14 @@ def main() -> None:
     if args.doctor:
         from .doctor import run
         raise SystemExit(run())
+
+    busy = check_port(args.port)
+    if busy:
+        who = ("An OLD copy of M.R.X. is still running" if busy == "mrx" else f"Another program is using port {args.port}")
+        print(f"\n  ✗ {who}, so this new copy cannot start.\n"
+              f"    Close the other M.R.X. window (click it and press Ctrl+C, or just close it) and any open M.R.X. browser tabs,\n"
+              f"    then run run.bat again.  (Or start on another port:  run.bat --port {args.port + 1})\n")
+        raise SystemExit(1)
 
     import uvicorn
     from .api.app import create_app

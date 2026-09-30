@@ -84,8 +84,10 @@ def plan_clause(clause: str, ctx: Context) -> Intent | None:
     c = clause.strip()
     low = c.lower()
 
-    if re.fullmatch(r"(?:hi+|hey+|hello+|hola|yo|namaste|namaskar|sat sri akal|salaam|assalam[a-z ]*|good (?:morning|afternoon|evening)|"
-                    r"how are you|what'?s up|sup)(?:\s+(?:there|mrx|m\.?r\.?x\.?|buddy))?[!?. ]*", low) or \
+    name = r"(?:mrx|m\.?\s?r\.?\s?x\.?|mr\.?\s?x|mister\s?x|there|buddy|friend|assistant)"
+    greet = r"(?:hi+|hey+|hello+|hola|yo|namaste|namaskar|sat sri akal|salaam|assalam[a-z ]*|good (?:morning|afternoon|evening|night))"
+    if re.fullmatch(rf"(?:ok(?:ay)?[, ]+)?{greet}(?:[, ]+{name})?(?:[, ]+(?:how are you|how's it going|what's up))?[!?. ]*", low) or \
+            re.fullmatch(r"(?:how are you|what'?s up|sup)(?:\s+" + name + r")?[!?. ]*", low) or \
             re.fullmatch(r"(?:hey|hi|hello|ok|okay)[, ]+m\.?r\.?x\.?[!?. ]*|(?:नमस्ते|हेलो|हैलो|सत श्री अकाल|ਸਤ ਸ੍ਰੀ ਅਕਾਲ)[!?. ]*", low):
         return Intent("say", text="Hello! I'm M.R.X. Tell me what to do — for example “open Chrome”, “create a folder called "
                                   "Project X on my desktop”, “scan my network” or “show today's news”.", label="greeting")
