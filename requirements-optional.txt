@@ -1,0 +1,6 @@
+# Optional desktop-control extras. If any fail to install, M.R.X. still runs and the matching tools report "unavailable".
+pyautogui>=0.9.54
+pyperclip>=1.8
+mss>=9.0
+pygetwindow>=0.0.9; sys_platform == "win32"
+zeroconf>=0.130

@@ -6,6 +6,7 @@ if not exist .venv python -m venv .venv
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt || (echo Dependency install failed. & pause & exit /b 1)
+python -m pip install -r requirements-optional.txt || echo Some optional desktop-control packages could not be installed - M.R.X. still works.
 python -m playwright install chromium
 echo.
 echo Done. Start M.R.X. with run.bat

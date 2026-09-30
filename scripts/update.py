@@ -70,7 +70,11 @@ def main() -> int:
         n = apply_zip(data, ROOT)
         print(f"  Updated {n} files.")
     print("\n  Installing any new dependencies …")
-    subprocess.call([sys.executable, "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")])
+    if subprocess.call([sys.executable, "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")]) != 0:
+        print("  WARNING: a required package failed to install (see above). Run install.bat, or send me the message.")
+    opt = ROOT / "requirements-optional.txt"
+    if opt.exists() and subprocess.call([sys.executable, "-m", "pip", "install", "-q", "-r", str(opt)]) != 0:
+        print("  Note: some optional desktop-control packages could not be installed. M.R.X. still works; those tools report 'unavailable'.")
     print(f"\n  Done. Version: {before} -> {version(ROOT)}\n  Close M.R.X. if it is running and start it again with run.bat.")
     return 0
 

@@ -1,16 +1,11 @@
+# Core (required)
 fastapi>=0.110
 uvicorn[standard]>=0.29
 psutil>=5.9
 httpx>=0.27
 anthropic>=0.116
 playwright>=1.44
-# Optional desktop-control extras (Windows/macOS/Linux with a display)
-pyautogui>=0.9.54
-pyperclip>=1.8
-mss>=9.0
-pygetwindow>=0.0.9; sys_platform == "win32"
 keyring>=25.0
-zeroconf>=0.130
 pypdf>=4.0
 python-docx>=1.1
 openpyxl>=3.1

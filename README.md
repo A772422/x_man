@@ -23,7 +23,15 @@ macOS / Linux: `./install.sh` then `./run.sh`. Python 3.10+ is required.
 > The project was built in a cloud session, which cannot write to your PC's Desktop. `scripts/place_on_desktop.py`
 > (or `git clone` into your Desktop) puts it there; it understands OneDrive-redirected Desktops.
 
+### Updating
+
+Double-click **`update.bat`** (or `python scripts/update.py`). It downloads the latest version from GitHub (or runs `git pull`
+if you cloned), keeps your `.env`, settings and memories, then tells you to restart. **`doctor.bat`** prints diagnostics
+(never secrets) and tests the AI connection. The version is shown in the app header.
+
 ### Setting your API key (any one of these)
+
+0. **Simplest:** double-click **`setup_key.bat`**, paste the key, press Enter. It saves `.env` in the M.R.X. folder and tests it.
 
 1. **In the app (easiest, no restart):** dashboard → **Enable AI engine…** (or Settings → Security). Stored in the OS keychain
    (Windows Credential Manager); if none exists it offers a private `~/.mrx/.env` file. Then **Test AI connection** shows the exact problem if any.
@@ -100,7 +108,7 @@ Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt && playwright install chromium
+pip install -r requirements-dev.txt && playwright install chromium   # dev = core + optional + pytest
 python -m pytest            # 106 tests; browser tests skip if Chromium cannot start
 npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
 ```
