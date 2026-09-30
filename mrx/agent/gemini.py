@@ -122,6 +122,28 @@ class GeminiProvider(LLMProvider):
         return [m["name"].removeprefix("models/") for m in r.json().get("models", [])
                 if "generateContent" in m.get("supportedGenerationMethods", [])]
 
+    async def diagnose(self) -> list[str]:
+        """One tiny request per endpoint variant; returns human-readable lines (status + Google's message, never the key)."""
+        key, model = self._key(), self.model()
+        if not key:
+            return ["no key"]
+        body = {"contents": [{"role": "user", "parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 8}}
+        m = quote(model, safe="")
+        lines = []
+        for label, url in (("v1beta generateContent", f"{BASE}/models/{m}:generateContent"),
+                           ("v1 generateContent", f"https://generativelanguage.googleapis.com/v1/models/{m}:generateContent"),
+                           ("vertex-express generateContent", f"https://aiplatform.googleapis.com/v1/publishers/google/models/{m}:generateContent")):
+            try:
+                r = await self.rt.http.post(url, json=body, headers={"x-goog-api-key": key}, timeout=30)
+                try:
+                    msg = r.json().get("error", {}).get("message", "OK" if r.status_code == 200 else r.text[:120])
+                except ValueError:
+                    msg = r.text[:120]
+                lines.append(f"{label}: HTTP {r.status_code} - {msg[:160]}")
+            except httpx.HTTPError as e:
+                lines.append(f"{label}: {type(e).__name__}")
+        return lines
+
     async def _error(self, status: int, raw: str, model: str) -> LLMError:
         try:
             j = json.loads(raw).get("error", {})
@@ -138,7 +160,10 @@ class GeminiProvider(LLMProvider):
             return LLMError("Gemini's free-tier rate limit was reached (requests per minute/day are capped)." + wait + zero)
         if status == 404:
             names = [n for n in await self.list_models() if "gemini" in n][:10]
-            return LLMError(f"Gemini model '{model}' was not found." + (f" Available: {', '.join(names)}. Change it in Settings → AI." if names else " Change it in Settings → AI."))
+            listed = model in names
+            hint = (f" Google lists it for your key, so this is an endpoint/key-type problem rather than a wrong name." if listed
+                    else f" Available: {', '.join(names)}. Change it in Settings → AI." if names else " Change it in Settings → AI.")
+            return LLMError(f"Gemini returned 404 for model '{model}'. Google said: {msg[:220]}.{hint}")
         if "location is not supported" in low:
             return LLMError("Gemini is not available in your region for this key/project.")
         if status in (401, 403):
@@ -156,17 +181,40 @@ class GeminiProvider(LLMProvider):
                                 "generationConfig": {"maxOutputTokens": min(int(cfg.get("max_tokens", 16000)), 32768)}}
         if tools:
             body["tools"] = function_declarations(tools)
-        url = f"{BASE}/models/{quote(model, safe='')}:streamGenerateContent?alt=sse"
         headers = {"x-goog-api-key": key, "content-type": "application/json"}
+        # Ladder: streaming on v1beta → plain request on v1beta → plain request on the stable v1 API. Only a 404 moves down
+        # a rung (some key types/projects are only routable on some endpoints); every other error is final.
+        first_404: str | None = None
+        for api, streaming in (("v1beta", True), ("v1beta", False), ("v1", False), ("vertex", True), ("vertex", False)):
+            try:
+                return await self._request(api, streaming, model, headers, body, on_text)
+            except _NotFound as nf:
+                first_404 = first_404 or nf.raw
+                log.warning("Gemini 404 on %s %s", api, "stream" if streaming else "generate")
+            except LLMError:
+                if api != "vertex" or first_404 is None:
+                    raise               # the Vertex address is a last resort: its errors must not hide the original 404
+        raise await self._error(404, first_404 or "", model)
+
+    async def _request(self, api: str, streaming: bool, model: str, headers: dict, body: dict, on_text) -> Turn:
+        method = "streamGenerateContent?alt=sse" if streaming else "generateContent"
+        m = quote(model, safe="")
+        url = (f"https://aiplatform.googleapis.com/v1/publishers/google/models/{m}:{method}" if api == "vertex"
+               else f"https://generativelanguage.googleapis.com/{api}/models/{m}:{method}")
         for attempt in range(3):
             try:
                 async with self.rt.http.stream("POST", url, json=body, headers=headers, timeout=httpx.Timeout(90.0)) as r:
                     if r.status_code == 200:
-                        return await self._consume(r, on_text)
+                        if streaming:
+                            return await self._assemble(_sse_events(r), on_text)
+                        return await self._assemble(_one(json.loads((await r.aread()).decode("utf-8", "replace"))), on_text)
                     raw = (await r.aread()).decode("utf-8", "replace")
-                err = await self._error(r.status_code, raw, model)
-                if r.status_code in (500, 503) and attempt < 2:
-                    log.warning("Gemini %s, retrying", r.status_code)
+                    status = r.status_code
+                if status == 404:
+                    raise _NotFound(raw)
+                err = await self._error(status, raw, model)
+                if status in (500, 503) and attempt < 2:
+                    log.warning("Gemini %s, retrying", status)
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise err
@@ -176,16 +224,10 @@ class GeminiProvider(LLMProvider):
                 raise LLMError(f"Cannot reach Gemini (offline, firewall or proxy?): {type(e).__name__}")
         raise LLMError("Gemini is temporarily unavailable.")
 
-    async def _consume(self, r, on_text) -> Turn:
+    async def _assemble(self, events, on_text) -> Turn:
         parts: list[dict] = []
         finish, block, usage = None, None, {}
-        async for line in r.aiter_lines():
-            if not line.startswith("data:"):
-                continue
-            try:
-                ev = json.loads(line[5:].strip())
-            except ValueError:
-                continue
+        async for ev in events:
             if "error" in ev:
                 raise await self._error(int(ev["error"].get("code", 500)), json.dumps(ev), self.model())
             block = (ev.get("promptFeedback") or {}).get("blockReason") or block
@@ -208,3 +250,22 @@ class GeminiProvider(LLMProvider):
         if not text:
             raise LLMError(f"Gemini returned an empty response (finishReason={finish}). Try rephrasing, or pick another model in Settings → AI.")
         return Turn(text, [], "max_tokens" if finish == "MAX_TOKENS" else "end_turn", raw, u)
+
+
+class _NotFound(Exception):
+    def __init__(self, raw: str):
+        super().__init__(raw)
+        self.raw = raw
+
+
+async def _one(event: dict):
+    yield event
+
+
+async def _sse_events(r):
+    async for line in r.aiter_lines():
+        if line.startswith("data:"):
+            try:
+                yield json.loads(line[5:].strip())
+            except ValueError:
+                continue

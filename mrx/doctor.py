@@ -61,6 +61,13 @@ def run() -> int:
             good += 1
         except LLMError as e:
             print(f"\nLive test [{p.describe()}]: FAILED - {e}")
+            if hasattr(p, "diagnose"):
+                print("  Detailed check of each Google endpoint (no secrets shown):")
+                try:
+                    for line in asyncio.run(p.diagnose()):
+                        print("   -", line)
+                except Exception as ex:  # noqa: BLE001
+                    print("   (diagnosis failed:", type(ex).__name__, ")")
         except Exception as e:  # noqa: BLE001
             print(f"\nLive test [{p.describe()}]: FAILED - {type(e).__name__}: {e}")
     return 0 if good else 1

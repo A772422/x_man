@@ -123,7 +123,7 @@ Data lives in `~/.mrx` (`MRX_HOME` overrides): `settings.json`, `mrx.db`, `trash
 
 ```bash
 pip install -r requirements-dev.txt && playwright install chromium   # dev = core + optional + pytest
-python -m pytest            # 128 tests; browser tests skip if Chromium cannot start
+python -m pytest            # 134 tests; browser tests skip if Chromium cannot start
 npm test                    # UI state/voice logic (node ≥ 20, no dependencies)
 ```
 

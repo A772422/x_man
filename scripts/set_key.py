@@ -25,7 +25,7 @@ def write_env(name: str, value: str, path: Path = ENV) -> None:
 
 
 PROVIDERS = {
-    "1": ("GEMINI_API_KEY", "gemini", "AIza", "Google Gemini (free key: https://aistudio.google.com/apikey)"),
+    "1": ("GEMINI_API_KEY", "gemini", ("AIza", "AQ."), "Google Gemini (free key: https://aistudio.google.com/apikey)"),
     "2": ("ANTHROPIC_API_KEY", "anthropic", "sk-ant-", "Anthropic Claude (paid API credits: https://console.anthropic.com/)"),
 }
 
@@ -44,8 +44,9 @@ def main() -> int:
     if not key:
         print("\n  Nothing entered — nothing changed.")
         return 1
+    starts = " or ".join(prefix) if isinstance(prefix, tuple) else prefix
     if not key.startswith(prefix) or " " in key:
-        print(f"\n  That does not look like a {label.split(' (')[0]} key (expected to start with {prefix} and contain no spaces).")
+        print(f"\n  That does not look like a {label.split(' (')[0]} key (expected to start with {starts} and contain no spaces).")
         if input("  Save it anyway? [y/N] ").strip().lower() != "y":
             return 1
     write_env(name, key)

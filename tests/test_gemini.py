@@ -143,8 +143,14 @@ async def test_error_messages(rt, gem):
     assert "rate limit" in m and "35 seconds" in m
     m = await err_for(rt, gem, 429, {"error": {"code": 429, "message": "Quota exceeded, limit: 0", "status": "RESOURCE_EXHAUSTED"}})
     assert "no free-tier quota" in m
-    m = await err_for(rt, gem, 404, {"error": {"code": 404, "message": "models/x is not found", "status": "NOT_FOUND"}})
-    assert "gemini-2.5-flash" in m and "embedding" not in m         # lists real, usable models
+    nf = httpx.Response(404, json={"error": {"code": 404, "message": "models/x is not found for API version v1beta", "status": "NOT_FOUND"}})
+    unauth = httpx.Response(401, json={"error": {"code": 401, "message": "invalid credentials", "status": "UNAUTHENTICATED"}})
+    gem(nf, nf, nf, unauth, unauth)
+    rt.settings.update({"ai": {"gemini_model": "x"}})
+    with pytest.raises(LLMError) as e:
+        await g.GeminiProvider(rt).stream_turn("s", [{"role": "user", "content": "x"}], [], nop)
+    m = str(e.value)
+    assert "is not found for API version" in m and "gemini-2.5-flash" in m and "embedding" not in m   # Google's own words + real model list
 
 
 async def test_overload_is_retried_then_succeeds(rt, gem, monkeypatch):
@@ -228,3 +234,46 @@ async def test_ai_chip_reflects_real_results_not_just_key_presence(rt, monkeypat
     rt.agent.provider = Router(rt, {"gemini": Stub("gemini")})
     await run_task(rt, "hello again")
     assert rt.status()["services"]["ai"]["state"] == "CONNECTED"
+
+
+async def test_404_on_streaming_falls_back_to_plain_and_stable_endpoints(rt, gem):
+    nf = httpx.Response(404, json={"error": {"code": 404, "message": "not found", "status": "NOT_FOUND"}})
+    ok_body = httpx.Response(200, json=cand({"text": "hi from plain"}, finish="STOP"))
+    f = gem(nf, ok_body)
+    turn = await g.GeminiProvider(rt).stream_turn("s", [{"role": "user", "content": "x"}], [], nop)
+    assert turn.text == "hi from plain"
+    urls = [str(r.url) for r in f.requests if r.method == "POST"]
+    assert "streamGenerateContent" in urls[0] and urls[1].endswith(":generateContent") and "/v1beta/" in urls[1]
+    f = gem(nf, nf, ok_body)                       # third rung: stable v1 API
+    turn = await g.GeminiProvider(rt).stream_turn("s", [{"role": "user", "content": "x"}], [], nop)
+    assert turn.text == "hi from plain" and "/v1/models/" in str([str(r.url) for r in f.requests if r.method == "POST"][-1])
+
+
+async def test_non_404_errors_do_not_walk_the_ladder(rt, gem):
+    f = gem(httpx.Response(429, json={"error": {"code": 429, "message": "q", "status": "RESOURCE_EXHAUSTED"}}))
+    with pytest.raises(LLMError, match="rate limit"):
+        await g.GeminiProvider(rt).stream_turn("s", [{"role": "user", "content": "x"}], [], nop)
+    assert len([r for r in f.requests if r.method == "POST"]) == 1
+
+
+def test_new_style_aq_keys_accepted_by_setup_script():
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+    import set_key
+    prefix = set_key.PROVIDERS["1"][2]
+    assert "AQ.Ab8RN6IKm4lQcT4B5xHeE".startswith(prefix) and "AIzaSyFake".startswith(prefix) and not "sk-ant-x".startswith(prefix)
+
+
+async def test_last_resort_vertex_endpoint_used_only_after_404s(rt, gem):
+    nf = httpx.Response(404, json={"error": {"code": 404, "message": "not found", "status": "NOT_FOUND"}})
+    f = gem(nf, nf, nf, sse(cand({"text": "via vertex"}, finish="STOP")))
+    turn = await g.GeminiProvider(rt).stream_turn("s", [{"role": "user", "content": "x"}], [], nop)
+    posts = [str(r.url) for r in f.requests if r.method == "POST"]
+    assert turn.text == "via vertex" and "aiplatform.googleapis.com" in posts[-1] and all("aiplatform" not in u for u in posts[:-1])
+
+
+async def test_diagnose_reports_each_endpoint_without_the_key(rt, gem):
+    gem(httpx.Response(404, json={"error": {"message": "not found"}}), httpx.Response(200, json=cand({"text": "x"})), httpx.Response(401, json={"error": {"message": "auth"}}))
+    lines = await g.GeminiProvider(rt).diagnose()
+    assert len(lines) == 3 and "HTTP 404 - not found" in lines[0] and "HTTP 200 - " in lines[1] and "HTTP 401" in lines[2]
+    assert "AIza" not in " ".join(lines)
